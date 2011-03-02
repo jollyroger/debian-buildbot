@@ -1,0 +1,35 @@
+#! /bin/sh
+
+set -e
+
+USER_DESCR="Buildbot system user"
+MASTERS_DIR=~buildbot/masters
+#PID_DIR=/var/run/buildbot
+#LOG_DIR=/var/log/buildbot
+PACKAGE=
+STATE=
+
+case "$1" in
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear|remove)
+        ;;
+    purge)
+        # Remove the user and its home dir if no buildbot packages left
+        if ! (dpkg --get-selections 'buildbot*' | egrep -q '(install|hold|deinstall)') ; then
+            if getent passwd buildbot >/dev/null ; then
+                echo "Removing $USER_DESCR ..."
+                deluser --quiet --system --remove-home buildbot
+            fi
+        else
+            rm -rf $MASTERS_DIR
+            #rm -rf $PID_DIR $LOG_DIR
+        fi
+        ;;
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,48 @@
+#! /bin/sh
+
+set -e
+
+HOME_DIR=/var/lib/buildbot
+USER_NAME=buildbot
+USER_DESCR="Buildbot system user"
+
+#PID_DIR=/var/run/buildbot
+#LOG_DIR=/var/log/buildbot
+
+case "$1" in
+    configure)
+        # Create builbot user account if not exist
+        if ! getent passwd buildbot>/dev/null; then
+            echo "Creating $USER_DESCR ..."
+            adduser --quiet \
+                --system \
+                --disabled-login \
+                --disabled-password \
+                --no-create-home \
+                --group \
+                --gecos "$USER_DESCR" \
+                --home "$HOME_DIR" \
+                "$USER_NAME"
+        fi
+
+        # Fix permissions on $HOME_DIR recursively
+        chown -R $USER_NAME: $HOME_DIR
+
+        ## Fix permissions on created directories
+        #mkdir -p          $PID_DIR $LOG_DIR
+        #chown $USER_NAME: $PID_DIR $LOG_DIR
+        #chmod 775         $PID_DIR $LOG_DIR
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

@@ -1,0 +1,9 @@
+Description: Fix version number for documentation pages.
+Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Last-Update: 2011-03-02
+
+--- buildbot-0.8.3p1.orig/docs/version.texinfo
++++ buildbot-0.8.3p1/docs/version.texinfo
+@@ -1 +1 @@
+-@set VERSION latest
++@set VERSION 0.8.3p1

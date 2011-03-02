@@ -1,0 +1,3 @@
+contrib/README.txt /usr/share/buildbot/contrib
+contrib/css        /usr/share/buildbot/contrib
+contrib/*.py       /usr/share/buildbot/contrib

@@ -1,0 +1,28 @@
+Source: buildbot
+Section: devel
+Priority: optional
+Maintainer: Matthias Klose <doko@debian.org>
+Build-Depends: debhelper (>= 7.0.50~), python (>= 2.3.5-10), python-twisted (>= 2.0), python-jinja2 (>=2.1), python-mock, texinfo
+XS-Python-Version: all
+Standards-Version: 3.9.1
+
+Package: buildbot
+Architecture: all
+Depends: ${python:Depends}, ${misc:Depends}, python-twisted-core (>= 2.0), python-twisted-words, python-jinja2 (>=2.1), adduser, dpkg (>= 1.15.4) | install-info
+Recommends: python-twisted-mail, python-twisted-web
+Suggests: bzr | subversion | cvs | mercurial | darcs | git-core
+XB-Python-Version: ${python:Versions}
+Description: a system to automate the compile/test cycle
+ The BuildBot is a system to automate the compile/test cycle required
+ by most software projects to validate code changes. By automatically
+ rebuilding and testing the tree each time something has changed,
+ build problems are pinpointed quickly, before other developers are
+ inconvenienced by the failure. The guilty developer can be identified
+ and harassed without human intervention.
+ .
+ By running the builds on a variety of platforms, developers who do
+ not have the facilities to test their changes everywhere before
+ checkin will at least know shortly afterwards whether they have
+ broken the build or not. Warning counts, lint checks, image size,
+ compile time, and other build parameters can be tracked over time,
+ are more visible, and are therefore easier to improve.

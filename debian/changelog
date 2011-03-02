@@ -1,0 +1,160 @@
+buildbot (0.8.3p1-1) unstable; urgency=low
+
+  * New upstream version.
+  * Build using dh_python2 instead of dh_pycentral.
+  * Remove dependency on python-central.
+  * Switch to dpkg-source 3.0 (quilt) format.
+  * Remove unnecessary Build-Conflicts.
+  * Upgrade compatibility level to 7.
+  * Upgrade Standards-Version to 3.9.1.
+  * Add tests to build process (Build-Depends: python-mock).
+  * Add versioned Depends and Build-Depends: python-jinja2 (>=2.1).
+  * debian/rules: use override rules instead of redefining whole build
+    process.
+  * Purge buildbot user and its home directory only when all buildbot packages 
+    have been purged.
+  * debian/watch: use googlecode for source download.
+  * fix-init-scripts.patch: comment out example configuration in
+    /etc/default/buildmaster.
+  * fix-interpreters.patch: move sed scripting from debian/rules to separate
+    patch which sets the correct interpreters for contrib scripts.
+  * fix-test-root.patch: remove superuser checks to be able to test under
+    fakeroot.
+  * fix-doc-version.patch: use "0.8.3p1" as version string in all documents.
+  * fix-makeinfo-args.patch: move makeinfo scripting from debian/rules to
+    separate patch which sets makeinfo arguments as for 0.7.12 package.
+  * fix-info-dir.patch: backport doc patches from 0.7.12 package.
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Wed, 02 Mar 2011 18:22:40 +0200
+
+buildbot (0.7.12-2) unstable; urgency=low
+
+  * Call setup.py install using --install-layout=deb. Closes: #569278.
+
+ -- Matthias Klose <doko@debian.org>  Sun, 28 Feb 2010 04:48:48 +0100
+
+buildbot (0.7.12-1) unstable; urgency=low
+
+  * New upstream version.
+  * Recommend python-twisted-mail, python-twisted-web instead of depending
+    on it. Only the server does depend on these packages. Closes: #565993.
+  * Add manual page for buildbot (Iustin Pop). Closes: #554531.
+
+ -- Matthias Klose <doko@debian.org>  Wed, 27 Jan 2010 15:04:26 +0100
+
+buildbot (0.7.11p3-1) unstable; urgency=low
+
+  * New upstream version.
+    - Fix CVE-2009-2959[0], cross-site scripting (XSS) vulnerability.
+      Closes: #543822.
+    - Fix buildbot serving CSS as text/plain, breaking styling in Firefox.
+      Closes: #517267.
+  * Fixed in 0.7.10: test output flooded in waterfall display.
+    Closes: #512770.
+  * Fix /etc/init.d/buildbot reload crashing buildslaves (Petr Rockai).
+    Closes: #503288.
+  * Fix some lintian warnings.
+
+ -- Matthias Klose <doko@debian.org>  Thu, 27 Aug 2009 08:23:06 +0200
+
+buildbot (0.7.10p1-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Matthias Klose <doko@debian.org>  Thu, 19 Mar 2009 19:50:33 +0100
+
+buildbot (0.7.9-1) unstable; urgency=low
+
+  * New upstream version.
+  * Suggest supported version control systems. Closes: #496539.
+
+ -- Matthias Klose <doko@debian.org>  Tue, 23 Sep 2008 16:58:12 +0200
+
+buildbot (0.7.8-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Matthias Klose <doko@debian.org>  Sat, 26 Jul 2008 16:51:45 +0200
+
+buildbot (0.7.7-1) unstable; urgency=low
+
+  * New upstream version.
+  * debian/watch: Update. Closes: #449882.
+
+ -- Matthias Klose <doko@debian.org>  Sun, 27 Apr 2008 15:27:31 +0200
+
+buildbot (0.7.6-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Matthias Klose <doko@debian.org>  Sat, 26 Jan 2008 22:26:36 +0100
+
+buildbot (0.7.5-1.1) unstable; urgency=low
+
+  * Non-maintainer upload during BSP.
+  * Conditional call on deluser in postrm (Closes: #416669)
+
+ -- Martin Zobel-Helas <zobel@ftbfs.de>  Thu, 17 May 2007 13:30:46 +0200
+
+buildbot (0.7.5-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Matthias Klose <doko@debian.org>  Wed,  3 Jan 2007 16:41:10 +0100
+
+buildbot (0.7.4-3) unstable; urgency=low
+
+  * Use unversioned interpreter for contributed scripts, eliminating
+    dependency on python2.3.
+  * Use /var/lib/buildbot as home directory for the buildbot user.
+
+ -- Matthias Klose <doko@debian.org>  Wed, 18 Oct 2006 22:18:40 +0200
+
+buildbot (0.7.4-2) unstable; urgency=medium
+
+  * Use su -s /bin/sh to launch buildbots. Closes: #388028.
+  * Fix location of examples directory. Closes: #386508.
+  * Ship some script files in /usr/share/buildbot/contrib. Closes: #388030.
+
+ -- Matthias Klose <doko@debian.org>  Wed,  4 Oct 2006 00:06:06 +0200
+
+buildbot (0.7.4-1) unstable; urgency=low
+
+  * New upstream version.
+  * Fix init script, starting buildbots on system startup. Closes: #384090.
+
+ -- Matthias Klose <doko@debian.org>  Mon, 28 Aug 2006 07:21:16 +0200
+
+buildbot (0.7.3-3.1) unstable; urgency=low
+
+  * Adding the --system flag when creating the user in postinst.
+      - Closes: #382715.
+
+ -- David Moreno Garza <damog@debian.org>  Sun, 13 Aug 2006 14:48:54 -0500
+
+buildbot (0.7.3-3) unstable; urgency=low
+
+  * Only create buildbot user if it doesn't yet exist (Thom May).
+    Closes: #378822.
+
+ -- Matthias Klose <doko@debian.org>  Sun, 23 Jul 2006 19:55:35 +0000
+
+buildbot (0.7.3-2) unstable; urgency=low
+
+  * Add copyright for contrib/svnpoller.py.
+
+ -- Matthias Klose <doko@debian.org>  Fri,  7 Jul 2006 21:10:28 +0200
+
+buildbot (0.7.3-1) unstable; urgency=low
+
+  * New upstream version.
+  * Convert to updated Python policy.
+
+ -- Matthias Klose <doko@debian.org>  Sat, 17 Jun 2006 02:45:50 +0200
+
+buildbot (0.7.2-0ubuntu1) dapper; urgency=low
+
+  * Initial release.
+
+ -- Matthias Klose <doko@ubuntu.com>  Sat, 15 Apr 2006 21:20:08 +0200
+

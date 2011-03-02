@@ -1,0 +1,34 @@
+#!/usr/bin/make -f
+
+DESTDIR = debian/buildbot
+DOCDIR = /usr/share/doc/buildbot
+
+%:
+	dh $@ --with python2
+
+make_docs:
+	cd docs && $(MAKE) buildbot.info && $(MAKE) buildbot.html
+
+override_dh_auto_build: make_docs
+	dh_auto_build
+
+
+override_dh_auto_clean:
+	rm -fR buildbot.egg-info _trial_temp
+	rm -f docs/buildbot.info* docs/buildbot.html
+	dh_auto_clean
+
+override_dh_auto_test:
+	python setup.py test
+
+override_dh_installinit:
+	mkdir -p ${DESTDIR}/etc/init.d ${DESTDIR}/etc/default
+	cp contrib/init-scripts/buildmaster.init.sh ${DESTDIR}/etc/init.d/buildmaster
+	cp contrib/init-scripts/buildmaster.default ${DESTDIR}/etc/default/buildmaster
+	dh_installinit --name=buildmaster --onlyscripts
+
+override_dh_installdocs:
+	dh_installdocs
+	# Copy necessary images to docs directory
+	mkdir -p ${DESTDIR}${DOCDIR}/images
+	cp docs/images/*.png ${DESTDIR}${DOCDIR}/images

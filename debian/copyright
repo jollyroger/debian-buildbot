@@ -1,0 +1,23 @@
+This work was packaged for Debian by:
+
+    Matthias Klose <doko@ubuntu.com> on Tue, 4 Apr 2006 16:33:44 +0200
+
+It was downloaded from:
+    
+    http://prdownloads.sourceforge.net/buildbot/
+
+Upstream Authors:
+    Brian Warner <warner-buildbot@lothar.com>
+    Dustin J. Mitchell <dustin@v.igoro.us>
+
+Copyright:
+
+    Copyright (C) Buildbot Team Members
+    See CREDITS for a list of contributors.
+
+License:
+
+Licensed under the GPL.
+
+On Debian GNU/Linux systems, the complete text of the GNU General
+Public License can be found in `/usr/share/common-licenses/GPL'.

@@ -1,0 +1,41 @@
+Description: Comment out example buildslave instance
+Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Last-Update: 2011-03-01
+
+--- a/contrib/init-scripts/buildmaster.default
++++ b/contrib/init-scripts/buildmaster.default
+@@ -1,8 +1,8 @@
+ MASTER_RUNNER=/usr/bin/buildbot
+ 
+-MASTER_ENABLED[1]=0                    # 0-enabled, other-disabled
+-MASTER_NAME[1]="buildmaster #1"        # short name printed on start/stop
+-MASTER_USER[1]="buildbot"              # user to run master as
+-MASTER_BASEDIR[1]=""                   # basedir to master (absolute path)
+-MASTER_OPTIONS[1]=""                   # buildbot options  
+-MASTER_PREFIXCMD[1]=""                 # prefix command, i.e. nice, linux32, dchroot
++#MASTER_ENABLED[1]=0                    # 0-enabled, other-disabled
++#MASTER_NAME[1]="buildmaster #1"        # short name printed on start/stop
++#MASTER_USER[1]="buildbot"              # user to run master as
++#MASTER_BASEDIR[1]=""                   # basedir to master (absolute path)
++#MASTER_OPTIONS[1]=""                   # buildbot options  
++#MASTER_PREFIXCMD[1]=""                 # prefix command, i.e. nice, linux32, dchroot
+--- a/contrib/init-scripts/buildmaster.init.sh
++++ b/contrib/init-scripts/buildmaster.init.sh
+@@ -18,16 +18,7 @@
+ . /lib/lsb/init-functions
+ 
+ # Source buildmaster configuration
+-[[ -r /etc/default/buildbot ]] && . /etc/default/buildbot
+-#[[ -r /etc/sysconfig/buildbot ]] && . /etc/sysconfig/buildbot
+-
+-# Or define/override the configuration here
+-#MASTER_ENABLED[1]=0                    # 0-enabled, other-disabled
+-#MASTER_NAME[1]="buildmaster #1"        # short name printed on start/stop
+-#MASTER_USER[1]="buildbot"              # user to run master as
+-#MASTER_BASEDIR[1]=""                   # basedir to master (absolute path)
+-#MASTER_OPTIONS[1]=""                   # buildbot options  
+-#MASTER_PREFIXCMD[1]=""                 # prefix command, i.e. nice, linux32, dchroot
++[[ -r /etc/default/buildmaster ]] && . /etc/default/buildmaster
+ 
+ if [[ ! -x ${MASTER_RUNNER} ]]; then
+     log_failure_msg "does not exist or not an executable file: ${MASTER_RUNNER}"
