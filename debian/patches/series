@@ -1,6 +1,5 @@
 fix-interpreters.patch
 fix-init-scripts.patch
 fix-test-root.patch
-fix-doc-version.patch
 fix-makeinfo-args.patch
 fix-info-dir.patch

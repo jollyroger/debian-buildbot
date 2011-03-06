@@ -2,8 +2,10 @@
 
 DESTDIR = debian/buildbot
 DOCDIR = /usr/share/doc/buildbot
+export VERSION = $(shell head -n1 debian/changelog | cut -d' ' -f2 | tr -d '()')
 
 %:
+	echo ${VERSION}
 	dh $@ --with python2
 
 make_docs:
