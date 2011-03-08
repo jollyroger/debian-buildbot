@@ -1,6 +1,6 @@
 buildbot (0.8.3p1-1) unstable; urgency=low
 
-  * New upstream version.
+  * New upstream version (Closes: #587313).
   * Build using dh_python2 instead of dh_pycentral.
   * Remove dependency on python-central.
   * Switch to dpkg-source 3.0 (quilt) format.
@@ -25,7 +25,7 @@ buildbot (0.8.3p1-1) unstable; urgency=low
     separate patch which sets makeinfo arguments as for 0.7.12 package.
   * fix-info-dir.patch: backport doc patches from 0.7.12 package.
 
- -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Wed, 02 Mar 2011 18:22:40 +0200
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Tue, 08 Mar 2011 23:29:44 +0200
 
 buildbot (0.7.12-2) unstable; urgency=low
 
