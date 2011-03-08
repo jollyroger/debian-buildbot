@@ -9,6 +9,7 @@ Standards-Version: 3.9.1
 Package: buildbot
 Architecture: all
 Depends: ${python:Depends}, ${misc:Depends}, python-twisted-core (>= 2.0), python-twisted-words, python-jinja2 (>=2.1), adduser, dpkg (>= 1.15.4) | install-info
+Breaks: buildbot (<<0.8)
 Recommends: python-twisted-mail, python-twisted-web
 Suggests: bzr | subversion | cvs | mercurial | darcs | git-core
 XB-Python-Version: ${python:Versions}
