@@ -1,3 +1,8 @@
+Description: Add directory category to the texinfo manual.
+ This fixes lintian error for texinfo manual.
+Applied-Upstream: 0.8.4, https://github.com/buildbot/buildbot/commit/d1fc4b76315bc1194152a30255c4d4cf4774e8c6
+Last-Update: 2011-03-14
+
 --- a/docs/buildbot.texinfo
 +++ b/docs/buildbot.texinfo
 @@ -33,6 +33,13 @@

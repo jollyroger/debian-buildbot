@@ -1,5 +1,6 @@
 Description: Remove root check to be able to test from fakeroot
 Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Applied-Upstream: 0.8.4, https://github.com/buildbot/buildbot/commit/533ffec6cfe5f00436d43ad67e3b9679018f8809
 Last-Update: 2011-03-01
 
 --- a/setup.py
