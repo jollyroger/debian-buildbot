@@ -8,11 +8,10 @@ export VERSION = $(shell head -n1 debian/changelog | cut -d' ' -f2 | tr -d '()')
 	dh $@ --with python2
 
 make_docs:
-	cd docs && $(MAKE) buildbot.info && $(MAKE) buildbot.html
+	$(MAKE) -C docs buildbot.info buildbot.html
 
 override_dh_auto_build: make_docs
 	dh_auto_build
-
 
 override_dh_auto_clean:
 	rm -fR buildbot.egg-info _trial_temp
