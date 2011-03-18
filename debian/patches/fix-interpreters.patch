@@ -1,4 +1,5 @@
 Description: fix interpreters in contrib python scripts
+ Upstream is not interested in this patch and considers it Debian-specific.
 Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
 Last-Update: 2011-03-02
 --- a/contrib/bk_buildbot.py

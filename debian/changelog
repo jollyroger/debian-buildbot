@@ -3,6 +3,9 @@ buildbot (0.8.3p1-1) unstable; urgency=low
   * New upstream version (Closes: #587313).
   * Build using dh_python2 instead of dh_pycentral.
   * Remove dependency on python-central.
+  * Add DEP-3 compliant headers to patches.
+  * Make debian/control DEP-5 compliant, add all copyright notices.
+  * Add project homepage in debian/control.
   * Switch to dpkg-source 3.0 (quilt) format.
   * Remove unnecessary Build-Conflicts.
   * Upgrade compatibility level to 7.

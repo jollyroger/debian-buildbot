@@ -1,4 +1,7 @@
 Description: Comment out example buildslave instance
+ Upstream is not interested in this patch because it's more os-specific and the
+ init-scripts themselves are contributed so not much connected with buildbot
+ itself.
 Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
 Last-Update: 2011-03-01
 
