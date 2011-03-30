@@ -1,3 +1,8 @@
+From: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Subject: Fix processing multibyte comments by GitPoller
+Origin: upstream, https://github.com/buildbot/buildbot/commit/77b808d335a0876e009de7d06e904c8af0459e55
+Bug: http://trac.buildbot.net/ticket/1785
+
 --- a/buildbot/changes/gitpoller.py
 +++ b/buildbot/changes/gitpoller.py
 @@ -35,7 +35,7 @@
