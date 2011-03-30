@@ -3,3 +3,4 @@ fix-init-scripts.patch
 fix-test-root.patch
 fix-makeinfo-args.patch
 fix-info-dir.patch
+gitpoller-multibyte.patch
