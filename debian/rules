@@ -19,7 +19,11 @@ override_dh_auto_clean:
 	dh_auto_clean
 
 override_dh_auto_test:
+ifneq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
+	@echo "Skipping check (disabled in DEB_BUILD_OPTIONS)."
+else
 	python setup.py test
+endif
 
 override_dh_installinit:
 	mkdir -p ${DESTDIR}/etc/init.d ${DESTDIR}/etc/default
