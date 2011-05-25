@@ -31,6 +31,16 @@ buildbot (0.8.3p1-1) unstable; urgency=low
 
  -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Tue, 08 Mar 2011 23:29:44 +0200
 
+buildbot (0.7.12-3) unstable; urgency=low
+
+  * Make recommendations on python-twisted-mail and python-twisted-web
+    dependencies.  Closes: #600268.
+  * Use dh_python2 instead of python-central.
+  * Set CSS stylesheet for for index.html (Andriy Senkovych). Closes: #576284.
+  * Add homepage to debian/control. Closes: #587314.
+
+ -- Matthias Klose <doko@debian.org>  Sun, 28 Nov 2010 18:01:56 +0100
+
 buildbot (0.7.12-2) unstable; urgency=low
 
   * Call setup.py install using --install-layout=deb. Closes: #569278.
