@@ -30,7 +30,7 @@ class OneBuildSlaveResource(HtmlResource, BuildLineMixin):
         HtmlResource.__init__(self)
         self.slavename = slavename
 
-    def getTitle(self, req):
+    def getPageTitle(self, req):
         return "Buildbot: %s" % self.slavename
 
     def getChild(self, path, req):
@@ -98,7 +98,7 @@ class OneBuildSlaveResource(HtmlResource, BuildLineMixin):
 
 # /buildslaves
 class BuildSlavesResource(HtmlResource):
-    title = "BuildSlaves"
+    pageTitle = "BuildSlaves"
     addSlash = True
 
     def content(self, request, ctx):
@@ -136,13 +136,12 @@ class BuildSlavesResource(HtmlResource):
             info['connected'] = slave.isConnected()
             info['connectCount'] = slave.getConnectCount()
             
-            if slave.isConnected():
-                info['admin'] = unicode(slave.getAdmin() or '', 'utf-8')
-                last = slave.lastMessageReceived()
-                if last:
-                    info['last_heard_from_age'] = abbreviate_age(time.time() - last)
-                    info['last_heard_from_time'] = time.strftime("%Y-%b-%d %H:%M:%S",
-                                                                time.localtime(last))
+            info['admin'] = unicode(slave.getAdmin() or '', 'utf-8')
+            last = slave.lastMessageReceived()
+            if last:
+                info['last_heard_from_age'] = abbreviate_age(time.time() - last)
+                info['last_heard_from_time'] = time.strftime("%Y-%b-%d %H:%M:%S",
+                                                            time.localtime(last))
 
         template = request.site.buildbot_service.templates.get_template("buildslaves.html")
         data = template.render(**ctx)

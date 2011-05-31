@@ -21,6 +21,7 @@ described here.
 * Twisted Idioms::
 * Buildbot Tests::
 * Developer Class Index::
+* String Encodings::
 @end menu
 
 @node Buildmaster Service Hierarchy
@@ -39,7 +40,7 @@ This is the top-level service.
 @itemize
 
 @item BotMaster
-@dvindex buildbot.master.BotMaster
+@dvindex buildbot.process.botmaster.BotMaster
 
 The BotMaster manages all of the slaves.  BuildSlave instances are added as
 child services of the BotMaster.
@@ -70,7 +71,7 @@ StatusReceiverMultiService and include an 'implements(IStatusReceiver)' stanza.
 @section Utilities
 
 @menu
-* buildbot.util.collections::
+* buildbot.util.bbcollections::
 * buildbot.util.eventual::
 * buildbot.util.json::
 @end menu
@@ -112,23 +113,74 @@ This function will filter out some inappropriate characters for filenames; it
 is suitable for adapting strings from the configuration for use as filenames.
 It is not suitable for use with strings from untrusted sources.
 
-@item LRUCache
+@item AsyncLRUCache
 
-This is a simple least-recently-used cache.  Its constructor takes a maximum
-size.  When the cache grows beyond this size, the least-recently used items
-will be automatically removed from the cache.  The class has @code{get} and
-@code{add} methods, and can also be accessed via dictionary syntax
-(@code{lru['id']}).
+This is a least-recently-used cache.  Its constructor takes a maximum size.
+When the cache grows beyond this size, the least-recently used items will be
+automatically removed from the cache.  The class has a @code{get} method that
+takes a key and a function to call (with the key) when the key is not in the
+cache.  Both @code{get} and the miss function return Deferreds.
+
+@item deferredLocked
+
+This is a decorator to wrap an event-driven method (one returning a
+@code{Deferred}) in an acquire/release pair of a designated
+@code{DeferredLock}.  For simple functions with a static lock, this is as easy as
+
+@example
+someLock = defer.DeferredLock()
+@@util.deferredLocked(someLock)
+def someLockedFunction(..):
+    # ..
+    return d
+@end example
+
+for class methods which must access a lock that is an instance attribute, the
+lock can be specified by a string, which will be dynamically resolved to the
+specific instance at runtime:
+
+@example
+    def __init__(self):
+        self.someLock = defer.DeferredLock()
+
+    @@util.deferredLocked('someLock')
+    def someLockedFunction(..):
+        # ..
+        return d
+@end example
+
+@item epoch2datetime
+
+Convert a UNIX epoch timestamp (an integer) to a Python datetime object, in the
+UTC timezone.  Note that timestamps specify UTC time (modulo leap seconds and a
+few other minor details).
+
+@item datetime2epoch
+
+Convert an arbitrary Python datetime object into a UNIX epoch timestamp.
+
+@item UTC
+
+A @code{datetime.tzinfo} subclass representing UTC time.  A similar class has
+finally been added to Python in version 3.2, but the implementation is simple
+enough to include here.  This is mostly used in tests to create timezeon-aware
+datetime objects in UTC:
+
+@example
+dt = datetime.datetime(1978, 6, 15, 12, 31, 15, tzinfo=UTC)
+@end example
 
 @end table
 
-@node buildbot.util.collections
-@subsection buildbot.util.collections
+@node buildbot.util.bbcollections
+@subsection buildbot.util.bbcollections
 
-This package provides a few useful collection objects.
+This package provides a few useful collection objects.  Note that it used to be
+named @code{collections}, but without absolute imports (PEP 328), this
+precluded using the standard library's @code{collections} module.
 
 For compatibility, it provides a clone of the Python
-@code{collections.defaultdict} for use in Python-2.4.  In later versions, this
+@code{bbcollections.defaultdict} for use in Python-2.4.  In later versions, this
 is simply a reference to the built-in @code{defaultdict}, so buildbot code can
 simply use @code{buildbot.util.collections.defaultdict} everywhere.
 
@@ -168,22 +220,9 @@ instead of a more complex conditional import of @code{simplejson} or
 @node The Database
 @section The Database
 
-@dvindex buildbot.db.dbspec.DBSpec
 @dvindex buildbot.db.connector.DBConnector
 
-Buildbot stores its state in a database, using the Python DBAPI to access it.
-
-A database is specified with the @code{buildbot.db.dbspec.DBSpec} class, which
-encapsulates all of the parameters necessary to create a DBAPI connection.  The
-DBSpec class can create either a single synchronous connection, or a twisted
-adbapi connection pool.
-
-Most uses of the database in Buildbot are done through the
-@code{buildbot.db.connector.DBConnector} class, which wraps the DBAPI to
-provide purpose-specific functions.
-
-The database schema is managed by a special class, described in the next
-section.
+TODO
 
 @menu
 * Database Schema::
@@ -270,7 +309,7 @@ Finally, make the corresponding changes to @file{buildbot/db/schema/tables.sql}.
 
 @node Log File Format
 @section Log File Format
-@dvindex buildbot.status.builder.LogFile
+@dvindex buildbot.status.logfile.LogFile
 
 The master currently stores each logfile in a single file, which may have a
 standard compression applied.
@@ -281,7 +320,7 @@ consists of a one-digit channel identifier followed by the data from that
 channel.
 
 The formatting is implemented in the LogFile class in
-@file{buildbot/status/builder.py}, and in particular by the @code{merge}
+@file{buildbot/status/logfile.py}, and in particular by the @code{merge}
 method.
 
 @node Web Status
@@ -489,6 +528,7 @@ Does nothing - used to keep traffic flowing over the TCP connection
 
 @dvindex buildslave.bot.SlaveBuilder
 @dvindex buildbot.process.builder.Builder
+@dvindex buildbot.process.slavebuilder.SlaveBuilder
 
 Each build slave has a set of builders which can run on it.  These are represented
 by distinct classes on the master and slave, just like the BuildSlave and Bot objects
@@ -496,7 +536,7 @@ described above.
 
 On the slave side, builders are represented as instances of the
 @code{buildslave.bot.SlaveBuilder} class.  On the master side, they are
-represented by the @code{buildbot.process.builder.SlaveBuilder} class.  The
+represented by the @code{buildbot.process.slavebuilder.SlaveBuilder} class.  The
 following will refer to these as the slave-side and master-side SlaveBuilder
 classes.  Each object keeps a reference to its opposite in @code{self.remote}.
 
@@ -783,6 +823,34 @@ this in the header of every test file:
 from buildbot.test.util.monkeypatches import monkeypatch
 monkeypatch()
 @end example
+
+@node String Encodings
+@section String Encodings
+
+Buildbot expects all strings used internally to be valid Unicode strings - not
+bytestrings.
+
+Note that Buildbot rarely feeds strings back into external tools in such a way
+that those strings must match.  For example, Buildbot does not attempt to
+access the filenames specified in a Change.  So it is more important to store
+strings in a manner that will be most useful to a human reader (e.g., in
+logfiles, web status, etc.) than to store them in a lossless format.
+
+@heading Inputs
+
+On input, strings should be decoded, if their encoding is known.  Where
+necessary, the assumed input encoding should be configurable.  In some cases,
+such as filenames, this encoding is not known or not well-defined (e.g., a
+utf-8 encoded filename in a latin-1 directory).  In these cases, the input
+mechanisms should make a best effort at decoding, and use e.g., the
+@code{errors='replace'} option to fail gracefully on un-decodable characters.
+
+@heading Outputs
+
+At most points where Buildbot outputs a string, the target encoding is known.
+For example, the web status can encode to utf-8.  In cases where it is not
+known, it should be configurable, with a safe fallback (e.g., ascii with
+@code{errors='replace'}).
 
 @node Developer Class Index
 @section Developer Class Index

@@ -15,7 +15,7 @@
 
 
 from buildbot import util
-from buildbot.process.base import Build
+from buildbot.process.build import Build
 from buildbot.process.buildstep import BuildStep
 from buildbot.steps.source import CVS, SVN
 from buildbot.steps.shell import Configure, Compile, Test, PerlModuleTest
@@ -42,7 +42,7 @@ class ArgumentsInTheWrongPlace(Exception):
 class BuildFactory(util.ComparableMixin):
     """
     @cvar  buildClass: class to use when creating builds
-    @type  buildClass: L{buildbot.process.base.Build}
+    @type  buildClass: L{buildbot.process.build.Build}
     """
     buildClass = Build
     useProgress = 1
@@ -59,11 +59,13 @@ class BuildFactory(util.ComparableMixin):
             return step_or_factory.getStepFactory()
         return step_or_factory
 
-    def newBuild(self, request):
+    def newBuild(self, requests):
         """Create a new Build instance.
-        @param request: a L{base.BuildRequest} describing what is to be built
+
+        @param requests: a list of buildrequest dictionaries describing what is
+        to be built
         """
-        b = self.buildClass(request)
+        b = self.buildClass(requests)
         b.useProgress = self.useProgress
         b.workdir = self.workdir
         b.setStepFactories(self.steps)

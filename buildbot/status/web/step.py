@@ -23,7 +23,7 @@ from time import ctime
 
 # /builders/$builder/builds/$buildnum/steps/$stepname
 class StatusResourceBuildStep(HtmlResource):
-    title = "Build Step"
+    pageTitle = "Build Step"
     addSlash = True
 
     def __init__(self, build_status, step_status):
@@ -61,7 +61,7 @@ class StatusResourceBuildStep(HtmlResource):
                         build_link = path_to_build(req, b),
                         b = b,
                         s = s,
-                        result_css = css_classes[b.getResults()]))
+                        result_css = css_classes[s.getResults()[0]]))
         
         template = req.site.buildbot_service.templates.get_template("buildstep.html");        
         return template.render(**cxt)

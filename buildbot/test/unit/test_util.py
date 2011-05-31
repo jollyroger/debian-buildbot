@@ -13,6 +13,8 @@
 #
 # Copyright Buildbot Team Members
 
+import datetime
+
 from twisted.trial import unittest
 
 from buildbot import util
@@ -94,72 +96,6 @@ class naturalSort(unittest.TestCase):
         l2 = 'a aa1ab aa3 aa3a aa10aa aa10ab aa30 aa30a f'.split()
         self.assertEqual(util.naturalSort(l1), l2)
 
-class LRUCache(unittest.TestCase):
-
-    def setUp(self):
-        self.lru = util.LRUCache(3)
-        self.a = "AAA"
-        self.b = "BBB"
-        self.x = "XXX"
-        self.y = "YYY"
-
-    def test_setitem_and_getitem(self):
-        self.lru['a'] = self.a
-        self.assertTrue(self.lru['a'] is self.a)
-
-    def test_full(self):
-        # full, but not to overflowing
-        self.lru.add("a", self.a)
-        self.lru.add("x", self.x)
-        self.lru.add("y", self.y)
-        self.assertTrue(self.lru.get('a') is self.a)
-        self.assertTrue(self.lru.get('x') is self.x)
-        self.assertTrue(self.lru.get('y') is self.y)
-
-    def test_lru_orderByAdd(self):
-        # least-recently used should get kicked out
-        self.lru.add("a", self.a)
-        self.lru.add("b", self.b)
-        self.lru.add("x", self.x)
-        self.lru.add("y", self.y)
-        self.assertEqual((self.lru.get('a'), self.lru.get('b')),
-                         (None, self.b))
-
-    def test_lru_usedByGet(self):
-        self.lru.add("a", self.a)
-        self.lru.add("b", self.b)
-        self.lru.add("x", self.x)
-        # use a and x, so b gets pushed out of the cache..
-        self.lru.get('a')
-        self.lru.get('x')
-        self.lru.add("y", self.y)
-        self.assertEqual((self.lru.get('a'), self.lru.get('b')),
-                         (self.a, None))
-
-    def test_lru_usedByAdd(self):
-        # least-recently used should get kicked out
-        self.lru.add("a", self.a)
-        self.lru.add("b", self.b)
-        self.lru.add("x", self.x)
-        # re-add a and x, so b gets pushed out of the cache (this is a
-        # regression test - older code did not mark items as used when they
-        # were added)
-        self.lru.add("a", self.a)
-        self.lru.add("x", self.x)
-        self.lru.add("y", self.y)
-        self.assertEqual((self.lru.get('a'), self.lru.get('b')),
-                         (self.a, None))
-
-    def test_get_falseValue(self):
-        # this more of a regression test: it used to be that getting a
-        # false value would not move the key up in the LRU list
-        self.lru.add("z", 0)
-        self.lru.add("a", self.a)
-        self.lru.add("b", self.b)
-        self.lru.get("z")
-        self.lru.add("x", self.x)
-        self.assertEqual(self.lru.get("z"), 0)
-
 class none_or_str(unittest.TestCase):
 
     def test_none(self):
@@ -170,3 +106,24 @@ class none_or_str(unittest.TestCase):
 
     def test_int(self):
         self.assertEqual(util.none_or_str(199), "199")
+
+class TimeFunctions(unittest.TestCase):
+
+    def test_UTC(self):
+        self.assertEqual(util.UTC.utcoffset(datetime.datetime.now()),
+                         datetime.timedelta(0))
+        self.assertEqual(util.UTC.dst(datetime.datetime.now()),
+                         datetime.timedelta(0))
+        self.assertEqual(util.UTC.tzname(), "UTC")
+
+    def test_epoch2datetime(self):
+        self.assertEqual(util.epoch2datetime(0),
+                datetime.datetime(1970, 1, 1, 0, 0, 0, tzinfo=util.UTC))
+        self.assertEqual(util.epoch2datetime(1300000000),
+                datetime.datetime(2011, 3, 13, 7, 6, 40, tzinfo=util.UTC))
+
+    def test_datetime2epoch(self):
+        dt = datetime.datetime(1970, 1, 1, 0, 0, 0, tzinfo=util.UTC)
+        self.assertEqual(util.datetime2epoch(dt), 0)
+        dt = datetime.datetime(2011, 3, 13, 7, 6, 40, tzinfo=util.UTC)
+        self.assertEqual(util.datetime2epoch(dt), 1300000000)

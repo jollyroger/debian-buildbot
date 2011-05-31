@@ -20,7 +20,8 @@ import datetime
 import os
 import re
 
-from twisted.web import error, html, resource
+from twisted.internet import defer
+from twisted.web import html, resource, server
 
 from buildbot.status.web.base import HtmlResource
 from buildbot.util import json
@@ -46,7 +47,7 @@ FLAGS = """\
       amount of useless data sent.
   - callback
     - Enable uses of JSONP as described in
-      http://en.wikipedia.org/wiki/JSON#JSONP. Note that
+      http://en.wikipedia.org/wiki/JSONP. Note that
       Access-Control-Allow-Origin:* is set in the HTTP response header so you
       can use this in compatible browsers.
 """
@@ -100,31 +101,6 @@ def RequestArgToBool(request, arg, default):
     return default
 
 
-def TwistedWebErrorAsDict(self, request):
-    """Additional method for twisted.web.error.Error."""
-    result = {}
-    result['http_error'] = self.status
-    result['response'] = self.response
-    return result
-
-
-def TwistedWebErrorPageAsDict(self, request):
-    """Additional method for twisted.web.error.Error."""
-    result = {}
-    result['http_error'] = self.code
-    result['response'] = self.brief
-    result['detail'] = self.detail
-    return result
-
-
-# Add .asDict() method to twisted.web.error.Error to simplify the code below.
-error.Error.asDict = TwistedWebErrorAsDict
-error.PageRedirect.asDict = TwistedWebErrorAsDict
-error.ErrorPage.asDict = TwistedWebErrorPageAsDict
-error.NoResource.asDict = TwistedWebErrorPageAsDict
-error.ForbiddenResource.asDict = TwistedWebErrorPageAsDict
-
-
 def FilterOut(data):
     """Returns a copy with None, False, "", [], () and {} removed.
     Warning: converts tuple to list."""
@@ -147,7 +123,7 @@ class JsonResource(resource.Resource):
     contentType = "application/json"
     cache_seconds = 60
     help = None
-    title = None
+    pageTitle = None
     level = 0
 
     def __init__(self, status):
@@ -156,11 +132,11 @@ class JsonResource(resource.Resource):
         # buildbot.status.builder.Status
         self.status = status
         if self.help:
-            title = ''
-            if self.title:
-                title = self.title + ' help'
+            pageTitle = ''
+            if self.pageTitle:
+                pageTitle = self.pageTitle + ' help'
             self.putChild('help',
-                          HelpResource(self.help, title=title, parent_node=self))
+                          HelpResource(self.help, pageTitle=pageTitle, parent_node=self))
 
     def getChildWithDefault(self, path, request):
         """Adds transparent support for url ending with /"""
@@ -184,25 +160,36 @@ class JsonResource(resource.Resource):
 
     def render_GET(self, request):
         """Renders a HTTP GET at the http request level."""
-        data = self.content(request)
-        if isinstance(data, unicode):
-            data = data.encode("utf-8")
-        request.setHeader("Access-Control-Allow-Origin", "*")
-        if RequestArgToBool(request, 'as_text', False):
-            request.setHeader("content-type", 'text/plain')
-        else:
-            request.setHeader("content-type", self.contentType)
-            request.setHeader("content-disposition",
-                              "attachment; filename=\"%s.json\"" % request.path)
-        # Make sure we get fresh pages.
-        if self.cache_seconds:
-            now = datetime.datetime.utcnow()
-            expires = now + datetime.timedelta(seconds=self.cache_seconds)
-            request.setHeader("Expires",
-                              expires.strftime("%a, %d %b %Y %H:%M:%S GMT"))
-            request.setHeader("Pragma", "no-cache")
-        return data
+        d = defer.maybeDeferred(lambda : self.content(request))
+        def handle(data):
+            if isinstance(data, unicode):
+                data = data.encode("utf-8")
+            request.setHeader("Access-Control-Allow-Origin", "*")
+            if RequestArgToBool(request, 'as_text', False):
+                request.setHeader("content-type", 'text/plain')
+            else:
+                request.setHeader("content-type", self.contentType)
+                request.setHeader("content-disposition",
+                                "attachment; filename=\"%s.json\"" % request.path)
+            # Make sure we get fresh pages.
+            if self.cache_seconds:
+                now = datetime.datetime.utcnow()
+                expires = now + datetime.timedelta(seconds=self.cache_seconds)
+                request.setHeader("Expires",
+                                expires.strftime("%a, %d %b %Y %H:%M:%S GMT"))
+                request.setHeader("Pragma", "no-cache")
+            return data
+        d.addCallback(handle)
+        def ok(data):
+            request.write(data)
+            request.finish()
+        def fail(f):
+            request.processingFailed(f)
+            return None # processingFailed will log this for us
+        d.addCallbacks(ok, fail)
+        return server.NOT_DONE_YET
 
+    @defer.deferredGenerator
     def content(self, request):
         """Renders the json dictionaries."""
         # Supported flags.
@@ -236,11 +223,30 @@ class JsonResource(resource.Resource):
                     node = node[pathElement]
                     request.prepath.append(pathElement)
                     child = child.getChildWithDefault(pathElement, request)
-                node.update(child.asDict(request))
+
+                # some asDict methods return a Deferred, so handle that
+                # properly
+                if hasattr(child, 'asDict'):
+                    wfd = defer.waitForDeferred(
+                            defer.maybeDeferred(lambda :
+                                child.asDict(request)))
+                    yield wfd
+                    child_dict = wfd.getResult()
+                else:
+                    child_dict = {
+                        'error' : 'Not available',
+                    }
+                node.update(child_dict)
+
                 request.prepath = prepath
                 request.postpath = postpath
         else:
-            data = self.asDict(request)
+            wfd = defer.waitForDeferred(
+                    defer.maybeDeferred(lambda :
+                        self.asDict(request)))
+            yield wfd
+            data = wfd.getResult()
+
         if filter_out:
             data = FilterOut(data)
         if compact:
@@ -252,8 +258,9 @@ class JsonResource(resource.Resource):
             callback = callback[0]
             if re.match(r'^[a-zA-Z$][a-zA-Z$0-9.]*$', callback):
                 data = '%s(%s);' % (callback, data)
-        return data
+        yield data
 
+    @defer.deferredGenerator
     def asDict(self, request):
         """Generates the json dictionary.
 
@@ -263,9 +270,13 @@ class JsonResource(resource.Resource):
             for name in self.children:
                 child = self.getChildWithDefault(name, request)
                 if isinstance(child, JsonResource):
-                    data[name] = child.asDict(request)
+                    wfd = defer.waitForDeferred(
+                            defer.maybeDeferred(lambda :
+                                child.asDict(request)))
+                    yield wfd
+                    data[name] = wfd.getResult()
                 # else silently pass over non-json resources.
-            return data
+            yield data
         else:
             raise NotImplementedError()
 
@@ -325,10 +336,10 @@ def ToHtml(text):
 
 
 class HelpResource(HtmlResource):
-    def __init__(self, text, title, parent_node):
+    def __init__(self, text, pageTitle, parent_node):
         HtmlResource.__init__(self)
         self.text = text
-        self.title = title
+        self.pageTitle = pageTitle
         self.parent_node = parent_node
 
     def content(self, request, cxt):
@@ -343,10 +354,29 @@ class HelpResource(HtmlResource):
         template = request.site.buildbot_service.templates.get_template("jsonhelp.html")
         return template.render(**cxt)
 
+class BuilderPendingBuildsJsonResource(JsonResource):
+    help = """Describe pending builds for a builder.
+"""
+    pageTitle = 'Builder'
+
+    def __init__(self, status, builder_status):
+        JsonResource.__init__(self, status)
+        self.builder_status = builder_status
+
+    def asDict(self, request):
+        # buildbot.status.builder.BuilderStatus
+        d = self.builder_status.getPendingBuildRequestStatuses()
+        def to_dict(statuses):
+            return defer.gatherResults(
+                [ b.asDict_async() for b in statuses ])
+        d.addCallback(to_dict)
+        return d
+
+
 class BuilderJsonResource(JsonResource):
     help = """Describe a single builder.
 """
-    title = 'Builder'
+    pageTitle = 'Builder'
 
     def __init__(self, status, builder_status):
         JsonResource.__init__(self, status)
@@ -354,16 +384,19 @@ class BuilderJsonResource(JsonResource):
         self.putChild('builds', BuildsJsonResource(status, builder_status))
         self.putChild('slaves', BuilderSlavesJsonResources(status,
                                                            builder_status))
+        self.putChild(
+                'pendingBuilds',
+                BuilderPendingBuildsJsonResource(status, builder_status))
 
     def asDict(self, request):
         # buildbot.status.builder.BuilderStatus
-        return self.builder_status.asDict()
+        return self.builder_status.asDict_async()
 
 
 class BuildersJsonResource(JsonResource):
     help = """List of all the builders defined on a master.
 """
-    title = 'Builders'
+    pageTitle = 'Builders'
 
     def __init__(self, status):
         JsonResource.__init__(self, status)
@@ -376,7 +409,7 @@ class BuildersJsonResource(JsonResource):
 class BuilderSlavesJsonResources(JsonResource):
     help = """Describe the slaves attached to a single builder.
 """
-    title = 'BuilderSlaves'
+    pageTitle = 'BuilderSlaves'
 
     def __init__(self, status, builder_status):
         JsonResource.__init__(self, status)
@@ -390,7 +423,7 @@ class BuilderSlavesJsonResources(JsonResource):
 class BuildJsonResource(JsonResource):
     help = """Describe a single build.
 """
-    title = 'Build'
+    pageTitle = 'Build'
 
     def __init__(self, status, build_status):
         JsonResource.__init__(self, status)
@@ -407,7 +440,7 @@ class BuildJsonResource(JsonResource):
 class AllBuildsJsonResource(JsonResource):
     help = """All the builds that were run on a builder.
 """
-    title = 'AllBuilds'
+    pageTitle = 'AllBuilds'
 
     def __init__(self, status, builder_status):
         JsonResource.__init__(self, status)
@@ -447,7 +480,7 @@ class AllBuildsJsonResource(JsonResource):
 class BuildsJsonResource(AllBuildsJsonResource):
     help = """Builds that were run on a builder.
 """
-    title = 'Builds'
+    pageTitle = 'Builds'
 
     def __init__(self, status, builder_status):
         AllBuildsJsonResource.__init__(self, status, builder_status)
@@ -473,10 +506,10 @@ class BuildsJsonResource(AllBuildsJsonResource):
 class BuildStepJsonResource(JsonResource):
     help = """A single build step.
 """
-    title = 'BuildStep'
+    pageTitle = 'BuildStep'
 
     def __init__(self, status, build_step_status):
-        # buildbot.status.builder.BuildStepStatus
+        # buildbot.status.buildstep.BuildStepStatus
         JsonResource.__init__(self, status)
         self.build_step_status = build_step_status
         # TODO self.putChild('logs', LogsJsonResource())
@@ -488,7 +521,7 @@ class BuildStepJsonResource(JsonResource):
 class BuildStepsJsonResource(JsonResource):
     help = """A list of build steps that occurred during a build.
 """
-    title = 'BuildSteps'
+    pageTitle = 'BuildSteps'
 
     def __init__(self, status, build_status):
         JsonResource.__init__(self, status)
@@ -500,10 +533,10 @@ class BuildStepsJsonResource(JsonResource):
         # Dynamic childs.
         build_step_status = None
         if isinstance(path, int) or _IS_INT.match(path):
-            build_step_status = self.build_status.getSteps[int(path)]
+            build_step_status = self.build_status.getSteps()[int(path)]
         else:
             steps_dict = dict([(step.getName(), step)
-                               for step in self.build_status.getStep()])
+                               for step in self.build_status.getSteps()])
             build_step_status = steps_dict.get(path)
         if build_step_status:
             # Create it on-demand.
@@ -519,8 +552,8 @@ class BuildStepsJsonResource(JsonResource):
         # Only use the number and not the names!
         results = {}
         index = 0
-        for step in self.build_status.getStep():
-            results[index] = step
+        for step in self.build_status.getSteps():
+            results[index] = step.asDict()
             index += 1
         return results
 
@@ -528,7 +561,7 @@ class BuildStepsJsonResource(JsonResource):
 class ChangeJsonResource(JsonResource):
     help = """Describe a single change that originates from a change source.
 """
-    title = 'Change'
+    pageTitle = 'Change'
 
     def __init__(self, status, change):
         # buildbot.changes.changes.Change
@@ -542,20 +575,18 @@ class ChangeJsonResource(JsonResource):
 class ChangesJsonResource(JsonResource):
     help = """List of changes.
 """
-    title = 'Changes'
+    pageTitle = 'Changes'
 
     def __init__(self, status, changes):
         JsonResource.__init__(self, status)
         for c in changes:
-            # TODO(maruel): Problem with multiple changes with the same number.
-            # Probably try server hack specific so we could fix it on this side
-            # instead. But there is still the problem with multiple pollers from
-            # different repo where the numbers could clash.
-            number = str(c.number)
-            while number in self.children:
-                # TODO(maruel): Do something better?
-                number = str(int(c.number)+1)
-            self.putChild(number, ChangeJsonResource(status, c))
+            # c.number can be None or clash another change if the change was
+            # generated inside buildbot or if using multiple pollers.
+            if c.number is not None and str(c.number) not in self.children:
+                self.putChild(str(c.number), ChangeJsonResource(status, c))
+            else:
+                # Temporary hack since it creates information exposure.
+                self.putChild(str(id(c)), ChangeJsonResource(status, c))
 
     def asDict(self, request):
         """Don't throw an exception when there is no child."""
@@ -567,7 +598,7 @@ class ChangesJsonResource(JsonResource):
 class ChangeSourcesJsonResource(JsonResource):
     help = """Describe a change source.
 """
-    title = 'ChangeSources'
+    pageTitle = 'ChangeSources'
 
     def asDict(self, request):
         result = {}
@@ -584,7 +615,7 @@ class ChangeSourcesJsonResource(JsonResource):
 class ProjectJsonResource(JsonResource):
     help = """Project-wide settings.
 """
-    title = 'Project'
+    pageTitle = 'Project'
 
     def asDict(self, request):
         return self.status.asDict()
@@ -593,7 +624,7 @@ class ProjectJsonResource(JsonResource):
 class SlaveJsonResource(JsonResource):
     help = """Describe a slave.
 """
-    title = 'Slave'
+    pageTitle = 'Slave'
 
     def __init__(self, status, slave_status):
         JsonResource.__init__(self, status)
@@ -631,7 +662,7 @@ class SlaveJsonResource(JsonResource):
 class SlavesJsonResource(JsonResource):
     help = """List the registered slaves.
 """
-    title = 'Slaves'
+    pageTitle = 'Slaves'
 
     def __init__(self, status):
         JsonResource.__init__(self, status)
@@ -642,9 +673,9 @@ class SlavesJsonResource(JsonResource):
 
 
 class SourceStampJsonResource(JsonResource):
-    help = """Describe the sources for a BuildRequest.
+    help = """Describe the sources for a SourceStamp.
 """
-    title = 'SourceStamp'
+    pageTitle = 'SourceStamp'
 
     def __init__(self, status, source_stamp):
         # buildbot.sourcestamp.SourceStamp
@@ -669,7 +700,7 @@ status. You may want to use a child instead to reduce the load on the server.
 
 For help on any sub directory, use url /child/help
 """
-    title = 'Buildbot JSON'
+    pageTitle = 'Buildbot JSON'
 
     def __init__(self, status):
         JsonResource.__init__(self, status)

@@ -27,8 +27,9 @@ from buildbot.status import builder
 
 class SourceStampExtractor:
 
-    def __init__(self, treetop, branch):
-        self.treetop = treetop # also is repository
+    def __init__(self, treetop, branch, repository):
+        self.treetop = treetop
+        self.repository = repository
         self.branch = branch
         self.exe = which(self.vcexe)[0]
 
@@ -53,12 +54,16 @@ class SourceStampExtractor:
         d.addCallback(self.getPatch)
         d.addCallback(self.done)
         return d
-    def readPatch(self, res, patchlevel):
-        self.patch = (patchlevel, res)
+    def readPatch(self, diff, patchlevel):
+        if not diff:
+            diff = None
+        self.patch = (patchlevel, diff)
     def done(self, res):
+        if not self.repository:
+            self.repository = self.treetop
         # TODO: figure out the branch and project too
         ss = SourceStamp(self.branch, self.baserev, self.patch, 
-                         repository=self.treetop)
+                         repository=self.repository)
         return ss
 
 class CVSExtractor(SourceStampExtractor):
@@ -221,27 +226,43 @@ class DarcsExtractor(SourceStampExtractor):
 class GitExtractor(SourceStampExtractor):
     patchlevel = 1
     vcexe = "git"
+    config = None
 
     def getBaseRevision(self):
+        # If a branch is specified, parse out the rev it points to
+        # and extract the local name (assuming it has a slash).
+        # This may break if someone specifies the name of a local
+        # branch that has a slash in it and has no corresponding
+        # remote branch (or something similarly contrived).
+        if self.branch:
+            d = self.dovc(["rev-parse", self.branch])
+            if '/' in self.branch:
+                self.branch = self.branch.split('/', 1)[1]
+            d.addCallback(self.override_baserev)
+            return d
         d = self.dovc(["branch", "--no-color", "-v", "--no-abbrev"])
         d.addCallback(self.parseStatus)
         return d
 
     def readConfig(self):
+        if self.config:
+            return defer.succeed(self.config)
         d = self.dovc(["config", "-l"])
         d.addCallback(self.parseConfig)
         return d
 
     def parseConfig(self, res):
-        git_config = {}
+        self.config = {}
         for l in res.split("\n"):
             if l.strip():
                 parts = l.strip().split("=", 2)
-                git_config[parts[0]] = parts[1]
+                self.config[parts[0]] = parts[1]
+        return self.config
 
+    def parseTrackingBranch(self, res):
         # If we're tracking a remote, consider that the base.
-        remote = git_config.get("branch." + self.branch + ".remote")
-        ref = git_config.get("branch." + self.branch + ".merge")
+        remote = self.config.get("branch." + self.branch + ".remote")
+        ref = self.config.get("branch." + self.branch + ".merge")
         if remote and ref:
             remote_branch = ref.split("/", 3)[-1]
             d = self.dovc(["rev-parse", remote + "/" + remote_branch])
@@ -259,20 +280,10 @@ class GitExtractor(SourceStampExtractor):
         m = re.search(r'^\* (\S+)\s+([0-9a-f]{40})', res, re.MULTILINE)
         if m:
             self.baserev = m.group(2)
-            # If a branch is specified, parse out the rev it points to
-            # and extract the local name (assuming it has a slash).
-            # This may break if someone specifies the name of a local
-            # branch that has a slash in it and has no corresponding
-            # remote branch (or something similarly contrived).
-            if self.branch:
-                d = self.dovc(["rev-parse", self.branch])
-                if '/' in self.branch:
-                    self.branch = self.branch.split('/', 1)[1]
-                d.addCallback(self.override_baserev)
-                return d
-            else:
-                self.branch = m.group(1)
-                return self.readConfig()
+            self.branch = m.group(1)
+            d = self.readConfig()
+            d.addCallback(self.parseTrackingBranch)
+            return d
         raise IndexError("Could not find current GIT branch: %s" % res)
 
     def getPatch(self, res):
@@ -280,42 +291,77 @@ class GitExtractor(SourceStampExtractor):
         d.addCallback(self.readPatch, self.patchlevel)
         return d
 
-def getSourceStamp(vctype, treetop, branch=None):
+class MonotoneExtractor(SourceStampExtractor):
+    patchlevel = 0
+    vcexe = "mtn"
+    def getBaseRevision(self):
+        d = self.dovc(["automate", "get_base_revision_id"])
+        d.addCallback(self.parseStatus)
+        return d
+    def parseStatus(self, output):
+        hash = output.strip()
+        if len(hash) != 40:
+            self.baserev = None
+        self.baserev = hash
+    def getPatch(self, res):
+        d = self.dovc(["diff"])
+        d.addCallback(self.readPatch, self.patchlevel)
+        return d
+
+
+def getSourceStamp(vctype, treetop, branch=None, repository=None):
     if vctype == "cvs":
-        e = CVSExtractor(treetop, branch)
+        cls = CVSExtractor
     elif vctype == "svn":
-        e = SVNExtractor(treetop, branch)
+        cls = SVNExtractor
     elif vctype == "bzr":
-        e = BzrExtractor(treetop, branch)
+        cls = BzrExtractor
     elif vctype == "hg":
-        e = MercurialExtractor(treetop, branch)
+        cls = MercurialExtractor
     elif vctype == "p4":
-        e = PerforceExtractor(treetop, branch)
+        cls = PerforceExtractor
     elif vctype == "darcs":
-        e = DarcsExtractor(treetop, branch)
+        cls = DarcsExtractor
     elif vctype == "git":
-        e = GitExtractor(treetop, branch)
+        cls = GitExtractor
+    elif vctype == "mtn":
+        cls = MonotoneExtractor
     else:
         raise KeyError("unknown vctype '%s'" % vctype)
-    return e.get()
+    return cls(treetop, branch, repository).get()
 
 
 def ns(s):
     return "%d:%s," % (len(s), s)
 
 def createJobfile(bsid, branch, baserev, patchlevel, diff, repository, 
-                  project, builderNames):
-    job = ""
-    job += ns("2")
-    job += ns(bsid)
-    job += ns(branch)
-    job += ns(str(baserev))
-    job += ns("%d" % patchlevel)
-    job += ns(diff)
-    job += ns(repository)
-    job += ns(project)
-    for bn in builderNames:
-        job += ns(bn)
+                  project, who, builderNames):
+    job = None
+    if who:
+        job = ""
+        job += ns("3")
+        job += ns(bsid)
+        job += ns(branch)
+        job += ns(str(baserev))
+        job += ns("%d" % patchlevel)
+        job += ns(diff)
+        job += ns(repository)
+        job += ns(project)
+        job += ns(who)
+        for bn in builderNames:
+            job += ns(bn)
+    else:
+        job = ""
+        job += ns("2")
+        job += ns(bsid)
+        job += ns(branch)
+        job += ns(str(baserev))
+        job += ns("%d" % patchlevel)
+        job += ns(diff)
+        job += ns(repository)
+        job += ns(project)
+        for bn in builderNames:
+            job += ns(bn)
     return job
 
 def getTopdir(topfile, start=None):
@@ -393,6 +439,7 @@ class BuildSetStatusGrabber:
 class Try(pb.Referenceable):
     buildsetStatus = None
     quiet = False
+    printloop = False
 
     def __init__(self, config):
         self.config = config
@@ -400,6 +447,7 @@ class Try(pb.Referenceable):
         assert self.connect, "you must specify a connect style: ssh or pb"
         self.builderNames = self.getopt('builders')
         self.project = self.getopt('project', '')
+        self.who = self.getopt('who')
 
     def getopt(self, config_name, default=None):
         value = self.config.get(config_name)
@@ -426,22 +474,25 @@ class Try(pb.Referenceable):
                 diff = sys.stdin.read()
             else:
                 diff = open(difffile,"r").read()
+            if not diff:
+                diff = None
             patch = (self.config['patchlevel'], diff)
-            ss = SourceStamp(branch, baserev, patch)
+            ss = SourceStamp(branch, baserev, patch, repository = self.getopt("repository"))
             d = defer.succeed(ss)
         else:
             vc = self.getopt("vc")
             if vc in ("cvs", "svn"):
                 # we need to find the tree-top
-                topdir = self.getopt("try-topdir")
+                topdir = self.getopt("topdir") or self.getopt("try-topdir")
                 if topdir:
                     treedir = os.path.expanduser(topdir)
                 else:
-                    topfile = self.getopt("try-topfile")
+                    topfile = (self.getopt("topfile")
+                               or self.getopt("try-topfile"))
                     treedir = getTopdir(topfile)
             else:
                 treedir = os.getcwd()
-            d = getSourceStamp(vc, treedir, branch)
+            d = getSourceStamp(vc, treedir, branch, self.getopt("repository"))
         d.addCallback(self._createJob_1)
         return d
 
@@ -455,7 +506,8 @@ class Try(pb.Referenceable):
             self.jobfile = createJobfile(self.bsid,
                                          ss.branch or "", revspec,
                                          patchlevel, diff, ss.repository,
-                                         self.project, self.builderNames)
+                                         self.project, self.who, 
+                                         self.builderNames)
 
     def fakeDeliverJob(self):
         # Display the job to be delivered, but don't perform delivery.
@@ -474,9 +526,9 @@ class Try(pb.Referenceable):
         # returns a Deferred that fires when the job has been delivered
 
         if self.connect == "ssh":
-            tryhost = self.getopt("tryhost")
+            tryhost = self.getopt("host") or self.getopt("tryhost")
             tryuser = self.getopt("username")
-            trydir = self.getopt("trydir")
+            trydir = self.getopt("jobdir") or self.getopt("trydir")
 
             argv = ["ssh", "-l", tryuser, tryhost,
                     "buildbot", "tryserver", "--jobdir", trydir]
@@ -489,7 +541,7 @@ class Try(pb.Referenceable):
         if self.connect == "pb":
             user = self.getopt("username")
             passwd = self.getopt("passwd")
-            master = self.getopt("master")
+            master = self.getopt("masterstatus") or self.getopt("master")
             tryhost, tryport = master.split(":")
             tryport = int(tryport)
             f = pb.PBClientFactory()
@@ -503,14 +555,25 @@ class Try(pb.Referenceable):
     def _deliverJob_pb(self, remote):
         ss = self.sourcestamp
 
-        d = remote.callRemote("try",
-                              ss.branch,
-                              ss.revision,
-                              ss.patch,
-                              ss.repository,
-                              self.project,
-                              self.builderNames,
-                              self.config.get('properties', {}))
+        if self.who:
+            d = remote.callRemote("try",
+                                  ss.branch,
+                                  ss.revision,
+                                  ss.patch,
+                                  ss.repository,
+                                  self.project,
+                                  self.builderNames,
+                                  self.who,
+                                  self.config.get('properties', {}))
+        else:
+            d = remote.callRemote("try",
+                                  ss.branch,
+                                  ss.revision,
+                                  ss.patch,
+                                  ss.repository,
+                                  self.project,
+                                  self.builderNames,
+                                  self.config.get('properties', {}))
         d.addCallback(self._deliverJob_pb2)
         return d
     def _deliverJob_pb2(self, status):
@@ -520,7 +583,7 @@ class Try(pb.Referenceable):
     def getStatus(self):
         # returns a Deferred that fires when the builds have finished, and
         # may emit status messages while we wait
-        wait = bool(self.getopt("wait", "try_wait"))
+        wait = bool(self.getopt("wait"))
         if not wait:
             # TODO: emit the URL where they can follow the builds. This
             # requires contacting the Status server over PB and doing
@@ -535,7 +598,7 @@ class Try(pb.Referenceable):
             return self.running
         # contact the status port
         # we're probably using the ssh style
-        master = self.getopt("master")
+        master = self.getopt("masterstatus") or self.getopt("master")
         host, port = master.split(":")
         port = int(port)
         self.announce("contacting the status port at %s:%d" % (host, port))
@@ -598,9 +661,9 @@ class Try(pb.Referenceable):
 
         # now that those queries are in transit, we can start the
         # display-status-every-30-seconds loop
-        self.printloop = task.LoopingCall(self.printStatus)
-        self.printloop.start(3, now=False)
-
+        if not self.getopt("quiet"):
+            self.printloop = task.LoopingCall(self.printStatus)
+            self.printloop.start(3, now=False)
 
     # these methods are invoked by the status objects we've subscribed to
 
@@ -664,7 +727,8 @@ class Try(pb.Referenceable):
         self.announce("")
 
     def statusDone(self):
-        self.printloop.stop()
+        if self.printloop:
+            self.printloop.stop()
         print "All Builds Complete"
         # TODO: include a URL for all failing builds
         names = self.buildRequests.keys()
@@ -690,9 +754,9 @@ class Try(pb.Referenceable):
         # get the names of the configured builders that can
         # be used for the --builder argument
         if self.connect == "pb":
-            user = self.getopt("username", "try_username")
-            passwd = self.getopt("passwd", "try_password")
-            master = self.getopt("master", "try_master")
+            user = self.getopt("username")
+            passwd = self.getopt("passwd")
+            master = self.getopt("master")
             tryhost, tryport = master.split(":")
             tryport = int(tryport)
             f = pb.PBClientFactory()

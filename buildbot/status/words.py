@@ -31,7 +31,7 @@ from buildbot import version
 from buildbot.interfaces import IStatusReceiver
 from buildbot.sourcestamp import SourceStamp
 from buildbot.status import base
-from buildbot.status.builder import SUCCESS, WARNINGS, FAILURE, EXCEPTION
+from buildbot.status.results import SUCCESS, WARNINGS, FAILURE, EXCEPTION
 from buildbot.scripts.runner import ForceOptions
 
 # twisted.internet.ssl requires PyOpenSSL, so be resilient if it's missing
@@ -91,6 +91,7 @@ class Contact(base.StatusReceiver):
         self.channel = channel
         self.notify_events = {}
         self.subscribed = 0
+        self.muted = False
         self.reported_builds = [] # tuples (when, buildername, buildnum)
         self.add_notification_events(channel.notify_events)
 
@@ -317,7 +318,7 @@ class Contact(base.StatusReceiver):
 
     def requestSubmitted(self, brstatus):
         log.msg('[Contact] BuildRequest %d for %s submitted' %
-            (brstatus.brid, brstatus.getSourceStamp()))
+            (brstatus.brid, brstatus.getBuilderName()))
 
     def builderRemoved(self, builderName):
         log.msg('[Contact] Builder %s removed' % (builderName))
@@ -431,12 +432,13 @@ class Contact(base.StatusReceiver):
                 self.send("Build details are at %s" % buildurl)
 
     def command_FORCE(self, args, who):
+        errReply = "try 'force build [--branch=BRANCH] [--revision=REVISION] <WHICH> <REASON>'"
         args = shlex.split(args)
         if not args:
-            raise UsageError("try 'force build WHICH <REASON>'")
+            raise UsageError(errReply)
         what = args.pop(0)
         if what != "build":
-            raise UsageError("try 'force build WHICH <REASON>'")
+            raise UsageError(errReply)
         opts = ForceOptions()
         opts.parseOptions(args)
 
@@ -446,8 +448,7 @@ class Contact(base.StatusReceiver):
         reason = opts['reason']
 
         if which is None:
-            raise UsageError("you must provide a Builder, "
-                             "try 'force build WHICH <REASON>'")
+            raise UsageError("you must provide a Builder, " + errReply)
 
         # keep weird stuff out of the branch and revision strings. 
         # TODO:  centralize this somewhere.
@@ -462,20 +463,17 @@ class Contact(base.StatusReceiver):
 
         bc = self.getControl(which)
 
-        # TODO: maybe give certain users the ability to request builds of
-        # certain branches
         reason = "forced: by %s: %s" % (self.describeUser(who), reason)
         ss = SourceStamp(branch=branch, revision=revision)
-        try:
-            brs = bc.submitBuildRequest(ss, reason, now=True)
-        except interfaces.NoSlaveError:
-            self.send("sorry, I can't force a build: all slaves are offline")
-            return
-        ireq = IrcBuildRequest(self)
-        brs.subscribe(ireq.started)
+        d = bc.submitBuildRequest(ss, reason)
+        def subscribe(buildreq):
+            ireq = IrcBuildRequest(self)
+            buildreq.subscribe(ireq.started)
+        d.addCallback(subscribe)
+        d.addErrback(log.err, "while forcing a build")
 
 
-    command_FORCE.usage = "force build <which> <reason> - Force a build"
+    command_FORCE.usage = "force build [--branch=branch] [--revision=revision] <which> <reason> - Force a build"
 
     def command_STOP(self, args, who):
         args = shlex.split(args)
@@ -558,6 +556,21 @@ class Contact(base.StatusReceiver):
             return
         self.emit_last(which)
     command_LAST.usage = "last <which> - list last build status for builder <which>"
+
+    def command_MUTE(self, args, who):
+        # The order of these is important! ;)
+        self.send("Shutting up for now.")
+        self.muted = True
+    command_MUTE.usage = "mute - suppress all messages until a corresponding 'unmute' is issued"
+
+    def command_UNMUTE(self, args, who):
+        if self.muted:
+            # The order of these is important! ;)
+            self.muted = False
+            self.send("I'm baaaaaaaaaaack!")
+        else:
+            self.send("You hadn't told me to be quiet, but it's the thought that counts, right?")
+    command_MUTE.usage = "unmute - disable a previous 'mute'"
 
     def build_commands(self):
         commands = []
@@ -645,10 +658,12 @@ class IRCContact(Contact):
     # userJoined(self, user, channel)
 
     def send(self, message):
-        self.channel.msgOrNotice(self.dest, message.encode("ascii", "replace"))
+        if not self.muted:
+            self.channel.msgOrNotice(self.dest, message.encode("ascii", "replace"))
 
     def act(self, action):
-        self.channel.me(self.dest, action.encode("ascii", "replace"))
+        if not self.muted:
+            self.channel.me(self.dest, action.encode("ascii", "replace"))
 
     def handleMessage(self, message, who):
         # a message has arrived from 'who'. For broadcast contacts (i.e. when
@@ -712,16 +727,21 @@ class IrcStatusBot(irc.IRCClient):
         @param nickname: the nickname by which this bot should be known
         @type  password: string
         @param password: the password to use for identifying with Nickserv
-        @type  channels: list of strings
+        @type  channels: list of dictionaries
         @param channels: the bot will maintain a presence in these channels
         @type  status: L{buildbot.status.builder.Status}
         @param status: the build master's Status object, through which the
                        bot retrieves all status information
+        @type  noticeOnChannel: boolean
+        @param noticeOnChannel: Defaults to False. If True, error messages
+                                for bot commands will be sent to the channel
+                                as notices. Otherwise they are sent as a msg.
         """
         self.nickname = nickname
         self.channels = channels
         self.password = password
         self.status = status
+        self.master = status.master
         self.categories = categories
         self.notify_events = notify_events
         self.counter = 0
@@ -784,13 +804,17 @@ class IrcStatusBot(irc.IRCClient):
         if "buildbot" in data:
             contact.handleAction(data, user)
 
-
-
     def signedOn(self):
         if self.password:
             self.msg("Nickserv", "IDENTIFY " + self.password)
         for c in self.channels:
-            self.join(c)
+            if isinstance(c, dict):
+                channel = c.get('channel', None)
+                password = c.get('password', None)
+            else:
+                channel = c
+                password = None
+            self.join(channel=channel, key=password)
 
     def joined(self, channel):
         self.log("I have joined %s" % (channel,))
@@ -890,7 +914,7 @@ class IRC(base.StatusReceiverMultiService):
                      "channels", "allowForce", "useSSL",
                      "categories"]
 
-    def __init__(self, host, nick, channels, port=6667, allowForce=True,
+    def __init__(self, host, nick, channels, port=6667, allowForce=False,
                  categories=None, password=None, notify_events={},
                  noticeOnChannel = False, showBlameList = True,
                  useSSL=False):

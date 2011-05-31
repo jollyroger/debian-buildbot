@@ -2,6 +2,7 @@
 * Buildbot Components::
 * Requirements::
 * Installing the code::
+* Running Buildbot's Tests (optional)::
 * Creating a buildmaster::
 * Upgrading an Existing Buildmaster::
 * Creating a buildslave::
@@ -76,14 +77,25 @@ Buildbot's windows testing is limited to the most recent Twisted and Python
 versions.  For best results, use the most recent available versions of these
 libraries on Windows.
 
+Note that versions of MSys Git earlier than 1.7.3.1 are known to have problems
+with incorrect exit statuses from git commands.  Always use the newest version
+of MSys Git.
+
 @node Buildmaster Requirements
 @subsection Buildmaster Requirements
 
 @itemize @bullet
 @item
-sqlite3: http://pypi.python.org/pypi/pysqlite
+sqlite3: http://www.sqlite.org
 
-The sqlite3 package is required for python-2.5 and earlier (it is already
+Buildbot requires SQLite to store its state.  Version 3.3.8 or higher is
+recommended, as earlier versions had trouble with contention for database
+tables.
+
+@item
+pysqlite: http://pypi.python.org/pypi/pysqlite
+
+The SQLite Python package is required for python-2.5 and earlier (it is already
 included in python-2.5 and later, but the version in python-2.5 has nasty bugs)
 
 @item
@@ -95,21 +107,57 @@ included as json in python-2.6 and later)
 @item
 Jinja2: http://jinja.pocoo.org/
 
-Buildbot requires Jinja version 2.1 or higher
+Buildbot requires Jinja version 2.1 or higher.
 
 Jinja2 is a general purpose templating language and is used by Buildbot
 to generate the HTML output.
+
+@item
+SQLAlchemy: http://www.sqlalchemy.org/
+
+Buildbot requires SQLAlchemy 0.6 or higher.  SQLAlchemy allows Buildbot to
+build database schemas and queries for a wide variety of database systems.
+
+@item
+SQLAlchemy-Migrate: http://code.google.com/p/sqlalchemy-migrate/
+
+Buildbot requires SQLAlchemy-Migrate version 0.6 (exactly; as-yet unreleased
+later versions may not work).  Buildbot uses SQLAlchemy-Migrate to manage
+schema upgrades from version to version.
 
 @end itemize
 
 @node Installing the code
 @section Installing the code
 
-@cindex installation
+@heading The Distribution Packages
 
-Buildbot and Buildslave are installed using the standard python
-@code{distutils} process. For either component, after unpacking the tarball,
-the process is:
+@cindex Packages
+@cindex Installation
+@cindex PyPI
+
+Buildbot comes in two parts: @code{buildbot} (the master) and
+@code{buildbot-slave} (the slave).  The two can be installed individually or
+together.
+
+@heading Installation From PyPI
+
+The easiest way to install Buildbot is using 'pip'.  For the master:
+@example
+pip install buildbot
+@end example
+
+and for the slave:
+
+@example
+pip install buildbot-slave
+@end example
+
+@heading Installation From Tarballs
+
+Buildbot and Buildslave can also be installed using the standard python
+@code{distutils} process. For either component (buildbot or buildbot-slave),
+after unpacking the tarball, the process is:
 
 @example
 python setup.py build
@@ -142,7 +190,20 @@ Windows users will find these files in other places. You will need to
 make sure that python can find the libraries, and will probably find
 it convenient to have @code{buildbot} on your PATH.
 
-If you wish, you can run the buildbot unit test suite like this:
+@node Running Buildbot's Tests (optional)
+@section Running Buildbot's Tests (optional)
+
+If you wish, you can run the buildbot unit test suite.  First, ensure you have
+the @url{http://pypi.python.org/pypi/mock,mock} Python module installed from
+PyPi.  This module is not required for ordinary Buildbot operation - only to
+run the tests.  Note that this is not the same as the Fedora @code{mock}
+package!  You can check with
+
+@example
+python -mmock
+@end example
+
+Then, run the tests:
 
 @example
 PYTHONPATH=. trial buildbot.test
@@ -150,14 +211,19 @@ PYTHONPATH=. trial buildbot.test
 PYTHONPATH=. trial buildslave.test
 @end example
 
-Nothing should fail, a few might be skipped. If any of the tests fail, you
-should stop and investigate the cause before continuing the installation
-process, as it will probably be easier to track down the bug early.  This may
-be a good time to contact the Buildbot developers for help.
+Nothing should fail, although a few might be skipped.
 
-If you cannot or do not wish to install the buildbot into a site-wide
-location like @file{/usr} or @file{/usr/local}, you can also install
-it into the account's home directory or any other location using a tool like @url{http://pypi.python.org/pypi/virtualenv,virtualenv}.
+If any of the tests fail for reasons other than a missing @code{mock}, you
+should stop and investigate the cause before continuing the installation
+process, as it will probably be easier to track down the bug early.  In most
+cases, the problem is incorrectly installed Python modules or a badly
+configured PYTHONPATH.  This may be a good time to contact the Buildbot
+developers for help.
+
+If you cannot or do not wish to install the buildbot into a site-wide location
+like @file{/usr} or @file{/usr/local}, you can also install it into the
+account's home directory or any other location using a tool like
+@url{http://pypi.python.org/pypi/virtualenv,virtualenv}.
 
 @node Creating a buildmaster
 @section Creating a buildmaster
@@ -206,7 +272,9 @@ installed. This can be used as the basis for customized daemon startup,
 
 If you want to use MySQL as the database backend for your Buildbot, add the
 @code{--db} option to the @code{create-master} invocation to specify the
-connection string for the MySQL database (@pxref{Database Specification}).
+connection string for the MySQL database (@pxref{Database Specification}), and
+make sure that the same URL appears in the @code{C['db_url']} parameter in your
+configuration file.
 
 @heading Buildmaster Options
 
@@ -242,8 +310,8 @@ specify a number or @code{None} to keep all @file{twistd.log} files
 around.  The default is 10.
 
 @item --db
-The database that the Buildmaster should use.  This information is needed
-earlier than the configuration file can be loaded.
+The database that the Buildmaster should use.  Note that the same value must be
+added to the configuration file.
 
 @end table
 
@@ -277,11 +345,15 @@ In general, Buildbot slaves and masters can be upgraded independently, although
 some new features will not be available, depending on the master and slave
 versions.
 
+Beyond this general information, read all of the sections below that apply to
+versions through which you are upgrading.
+
 @heading Version-specific Notes
 
 @menu
 * Upgrading a Buildmaster to Buildbot-0.7.6::
 * Upgrading a Buildmaster to Buildbot-0.8.0::
+* Upgrading a Buildmaster to Later Versions::
 @end menu
 
 @node Upgrading a Buildmaster to Buildbot-0.7.6
@@ -309,6 +381,28 @@ The upgrade process renames the Changes pickle (@code{$basedir/changes.pck}) to
 simply downgrade Buildbot and move this file back to its original name.  You
 may also wish to delete the state database (@code{state.sqlite}).
 
+@heading Upgrading into a non-SQLite database
+
+If you are not using sqlite, you will need to add an entry into your
+@file{master.cfg} to reflect the database version you are using. The upgrade
+process does @i{not} edit your @file{master.cfg} for you. So something like:
+
+@example
+# for using mysql:
+c['db_url'] = 'mysql://bbuser:<password>@@localhost/buildbot'
+@end example
+
+Once the parameter has been added, invoke @code{upgrade-master} with the
+@code{--db} parameter, e.g.,
+
+@example
+buildbot upgrade-master --db=mysql://bbuser:<password>@@localhost/buildbot
+@end example
+
+The @code{--db} option must match the @code{c['db_url']} exactly.
+
+See @pxref{Database Specification} for more options to specify a database.
+
 @heading Change Encoding Issues
 
 The upgrade process assumes that strings in your Changes pickle are encoded in
@@ -332,6 +426,12 @@ backing up changes.pck to changes.pck.old
 
 If your Changes pickle uses multiple encodings, you're on your own, but the
 script in contrib may provide a good starting point for the fix.
+
+@node Upgrading a Buildmaster to Later Versions
+@subsection Upgrading a Buildmaster to Later Versions
+
+Up to Buildbot version @value{VERSION}, no further steps beyond those described
+above are required.
 
 @node Creating a buildslave
 @section Creating a buildslave
@@ -556,17 +656,23 @@ on Windows is 'mbcs', on Mac OSX is 'utf-8', and on Unix depends on your locale
 settings.
 
 If you need a different encoding, this can be changed in your build slave's
-buildbot.tac file by adding a unicode_encoding argument to BuildSlave:
+buildbot.tac file by adding a unicode_encoding argument to the BuildSlave
+constructor.
 
 @item allow_shutdown
-allow_shutdown can be passed to the BuildSlave constructor in buildbot.tac.
+allow_shutdown can be passed to the BuildSlave constructor in buildbot.tac.  If
+set, it allows the buildslave to initiate a graceful shutdown, meaning that it
+will ask the master to shut down the slave when the current build, if any, is
+complete.
 
 Setting allow_shutdown to 'file' will cause the buildslave to watch
-'shutdown.stamp' in basedir for updates to its mtime.  The file does not need
-to exist prior to starting the slave.
+'shutdown.stamp' in basedir for updates to its mtime.  When the mtime changes,
+the slave will request a graceful shutdown from the master.  The file does not
+need to exist prior to starting the slave.
 
 Setting allow_shutdown to 'signal' will set up a SIGHUP handler to start a
-graceful shutdown.
+graceful shutdown.  When the signal is received, the slave will request a
+graceful shutdown from the master.
 
 The default value is None, in which case this feature will be disabled.
 
@@ -822,7 +928,7 @@ which find's @code{-mindepth} argument helps skip everything in the
 top directory. You can use something like the following:
 
 @example
-@@weekly cd BASEDIR && find . -mindepth 2 i-path './public_html/*' -prune -o -type f -mtime +14 -exec rm @{@} \;
+@@weekly cd BASEDIR && find . -mindepth 2 -ipath './public_html/*' -prune -o -type f -mtime +14 -exec rm @{@} \;
 @@weekly cd BASEDIR && find twistd.log* -mtime +14 -exec rm @{@} \;
 @end example
 

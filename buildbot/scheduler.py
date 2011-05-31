@@ -13,8 +13,8 @@
 #
 # Copyright Buildbot Team Members
 
-
-from buildbot.schedulers.basic import Scheduler, AnyBranchScheduler, Dependent
+from buildbot.schedulers.basic import Scheduler, AnyBranchScheduler
+from buildbot.schedulers.dependent import Dependent
 from buildbot.schedulers.timed import Periodic, Nightly
 from buildbot.schedulers.triggerable import Triggerable
 from buildbot.schedulers.trysched import Try_Jobdir, Try_Userpass

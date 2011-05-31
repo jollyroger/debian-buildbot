@@ -14,8 +14,10 @@
 # Copyright Buildbot Team Members
 
 
-from twisted.python import threadable
 import time, re, string
+import datetime
+import calendar
+from buildbot.util.misc import deferredLocked, SerializedInvocation
 
 def naturalSort(l):
     """Returns a sorted copy of l, so that numbers in strings are sorted in the
@@ -37,7 +39,21 @@ def naturalSort(l):
     l = [ i[1] for i in keyed_l ]
     return l
 
+def flatten(l):
+    """Flatten nested lists into a single-level list"""
+    if l and type(l[0]) == list:
+        rv = []
+        for e in l:
+            if type(e) == list:
+                rv.extend(e)
+            else:
+                rv.append(e)
+        return rv
+    else:
+        return l
+
 def now(_reactor=None):
+    """Get the time, using reactor.seconds or time.time"""
     if _reactor and hasattr(_reactor, "seconds"):
         return _reactor.seconds()
     else:
@@ -77,7 +93,10 @@ class ComparableMixin:
         if result:
             return result
 
-        assert self.compare_attrs == them.compare_attrs
+        result = cmp(self.compare_attrs, them.compare_attrs)
+        if result:
+            return result
+
         self_list = [getattr(self, name, self._None)
                      for name in self.compare_attrs]
         them_list = [getattr(them, name, self._None)
@@ -93,60 +112,23 @@ def safeTranslate(str):
         str = str.encode('utf8')
     return str.translate(badchars_map)
 
-class LRUCache:
-    """
-    A simple least-recently-used cache, with a fixed maximum size.  Note that
-    an item's memory will not necessarily be free if other code maintains a reference
-    to it, but this class will "lose track" of it all the same.  Without caution, this
-    can lead to duplicate items in memory simultaneously.
-    """
-
-    synchronized = ["get", "add"]
-
-    def __init__(self, max_size=50):
-        self._max_size = max_size
-        self._cache = {} # basic LRU cache
-        self._cached_ids = [] # = [LRU .. MRU]
-
-    def get(self, id):
-        thing = self._cache.get(id, None)
-        if thing is not None:
-            self._cached_ids.remove(id)
-            self._cached_ids.append(id)
-        return thing
-    __getitem__ = get
-
-    def add(self, id, thing):
-        if id in self._cache:
-            self._cached_ids.remove(id)
-            self._cached_ids.append(id)
-            return
-        while len(self._cached_ids) >= self._max_size:
-            del self._cache[self._cached_ids.pop(0)]
-        self._cache[id] = thing
-        self._cached_ids.append(id)
-    __setitem__ = add
-
-    def setMaxSize(self, max_size):
-        self._max_size = max_size
-
-threadable.synchronize(LRUCache)
-
-
 def none_or_str(x):
     """Cast X to a str if it is not None"""
     if x is not None and not isinstance(x, str):
         return str(x)
     return x
 
-# place a working json module at 'buildbot.util.json'.  Code is from
+# place a working json module at 'buildbot.util.json'.  Code is adapted from
 # Paul Wise <pabs@debian.org>:
 #   http://lists.debian.org/debian-python/2010/02/msg00016.html
+# json doesn't exist as a standard module until python2.6
+# However python2.6's json module is much slower than simplejson, so we prefer
+# to use simplejson if available.
 try:
-    import json # python 2.6
+    import simplejson as json
     assert json
 except ImportError:
-    import simplejson as json # python 2.4 to 2.5
+    import json # python 2.6 or 2.7
 try:
     _tmp = json.loads
 except AttributeError:
@@ -164,7 +146,29 @@ class NotABranch:
         return False
 NotABranch = NotABranch()
 
+# time-handling methods
+
+class UTC(datetime.tzinfo):
+    """Simple definition of UTC timezone"""
+    def utcoffset(self, dt):
+        return datetime.timedelta(0)
+
+    def dst(self, dt):
+        return datetime.timedelta(0)
+
+    def tzname(self):
+        return "UTC"
+UTC = UTC()
+
+def epoch2datetime(epoch):
+    """Convert a UNIX epoch time to a datetime object, in the UTC timezone"""
+    return datetime.datetime.fromtimestamp(epoch, tz=UTC)
+
+def datetime2epoch(dt):
+    """Convert a non-naive datetime object to a UNIX epoch timestamp"""
+    return calendar.timegm(dt.utctimetuple())
+
 __all__ = [
     'naturalSort', 'now', 'formatInterval', 'ComparableMixin', 'json',
     'safeTranslate', 'remove_userpassword', 'LRUCache', 'none_or_str',
-    'NotABranch']
+    'NotABranch', 'deferredLocked', 'SerializedInvocation', 'UTC' ]

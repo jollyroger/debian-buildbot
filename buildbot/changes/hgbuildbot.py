@@ -48,6 +48,10 @@
 #
 #   category = None                      # category property
 #   project = ''                         # project this repository belong to
+#
+#   auth = user:passwd                   # How to authenticate, defaults to
+#                                        # change:changepw, which is also
+#                                        # the default of PBChangeSource.
 
 import os
 
@@ -63,6 +67,17 @@ try:
 except ImportError:
     pass
 
+# In Mercurial post-1.7, some strings might be stored as a
+# encoding.localstr class. encoding.fromlocal will translate
+# those back to UTF-8 strings.
+try:
+    from mercurial.encoding import fromlocal
+    _hush_pyflakes = [fromlocal]
+    del _hush_pyflakes
+except ImportError:
+    def fromlocal(s):
+        return s
+
 def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
     # read config parameters
     master = ui.config('hgbuildbot', 'master')
@@ -74,6 +89,7 @@ def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
         stripcount = int(ui.config('notify','strip') or ui.config('hgbuildbot','strip',3))
         category = ui.config('hgbuildbot', 'category', None)
         project = ui.config('hgbuildbot', 'project', '')
+        auth = ui.config('hgbuildbot', 'auth', None)
     else:
         ui.write("* You must add a [hgbuildbot] section to .hg/hgrc in "
                  "order to use buildbot hook\n")
@@ -104,7 +120,11 @@ def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
             if branchtype == 'inrepo':
                 branch = workingctx(repo).branch()
 
-    s = sendchange.Sender(master)
+    if not auth:
+        auth = 'change:changepw'
+    auth = auth.split(':', 1)
+
+    s = sendchange.Sender(master, auth=auth)
     d = defer.Deferred()
     reactor.callLater(0, d.callback, None)
     # process changesets
@@ -134,17 +154,25 @@ def hook(ui, repo, hooktype, node=None, source=None, **kwargs):
         # merges don't always contain files, but at least one file is required by buildbot
         if len(parents) > 1 and not files:
             files = ["merge"]
+        if branch:
+            branch = fromlocal(branch)
         change = {
             'master': master,
-            'username': user,
+            'username': fromlocal(user),
             'revision': hex(node),
-            'comments': desc,
+            'comments': fromlocal(desc),
             'files': files,
             'branch': branch
         }
         d.addCallback(_send, change)
 
-    d.addCallbacks(s.printSuccess, s.printFailure)
+    def _printSuccess(res):
+        ui.status(s.getSuccessString(res) + '\n')
+
+    def _printFailure(why):
+        ui.warn(s.getFailureString(why) + '\n')
+
+    d.addCallbacks(_printSuccess, _printFailure)
     d.addBoth(s.stop)
     s.run()
 
