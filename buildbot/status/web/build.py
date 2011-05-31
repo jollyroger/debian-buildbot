@@ -38,7 +38,7 @@ class StatusResourceBuild(HtmlResource):
         HtmlResource.__init__(self)
         self.build_status = build_status
 
-    def getTitle(self, request):
+    def getPageTitle(self, request):
         return ("Buildbot: %s Build #%d" %
                 (self.build_status.getBuilder().getName(),
                  self.build_status.getNumber()))
@@ -203,7 +203,8 @@ class StatusResourceBuild(HtmlResource):
                     % (bc, b.isFinished()))
             # TODO: indicate an error
         else:
-            bc.rebuildBuild(b, reason, extraProperties)
+            d = bc.rebuildBuild(b, reason, extraProperties)
+            d.addErrback(log.err, "while rebuilding a build")
         # we're at
         # http://localhost:8080/builders/NAME/builds/5/rebuild?[args]
         # Where should we send them?

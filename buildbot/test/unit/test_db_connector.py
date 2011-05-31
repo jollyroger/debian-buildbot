@@ -13,75 +13,53 @@
 #
 # Copyright Buildbot Team Members
 
+import os
+import mock
+from twisted.internet import defer, reactor
 from twisted.trial import unittest
+from buildbot.db import connector
+from buildbot.test.util import db
 
-from buildbot.db import dbspec, connector
-from buildbot.test.util import threads
-
-class DBConnector_Basic(threads.ThreadLeakMixin, unittest.TestCase):
+class DBConnector(db.RealDatabaseMixin, unittest.TestCase):
     """
     Basic tests of the DBConnector class - all start with an empty DB
     """
 
     def setUp(self):
-        self.setUpThreadLeak()
-        # use an in-memory sqlite database to test
-        self.dbc = connector.DBConnector(dbspec.DBSpec.from_url("sqlite://"))
-        self.dbc.start()
+        d = self.setUpRealDatabase(
+            table_names=['changes', 'change_properties', 'change_links',
+                    'change_files', 'patches', 'sourcestamps',
+                    'buildset_properties', 'buildsets' ])
+        def make_dbc(_):
+            self.dbc = connector.DBConnector(mock.Mock(), self.db_url,
+                                        os.path.abspath('basedir'))
+        d.addCallback(make_dbc)
+        return d
 
     def tearDown(self):
-        self.dbc.stop()
-        self.tearDownThreadLeak()
+        return self.tearDownRealDatabase()
 
-    def test_quoteq_format(self):
-        self.dbc.paramstyle = "format" # override default
-        self.assertEqual(
-                self.dbc.quoteq("SELECT * from developers where name='?'"),
-                "SELECT * from developers where name='%s'")
+    def test_doCleanup(self):
+        # patch out all of the cleanup tasks; note that we can't patch dbc.doCleanup
+        # directly, since it's already been incorporated into the TimerService
+        cleanups = set([])
+        def pruneChanges(*args):
+            cleanups.add('pruneChanges')
+            return defer.succeed(None)
+        self.dbc.changes.pruneChanges = pruneChanges
 
-    def test_quoteq_qmark(self):
-        assert self.dbc.paramstyle == "qmark" # default for sqlite
-        self.assertEqual(
-                self.dbc.quoteq("SELECT * from developers where name='?'"),
-                "SELECT * from developers where name='?'")
+        self.dbc.startService()
 
-    def test_paramlist_single(self):
-        self.dbc.paramstyle = "format" # override default
-        self.assertEqual(self.dbc.parmlist(1), "(%s)")
+        d = defer.Deferred()
+        def check(_):
+            self.assertEqual(cleanups, set(['pruneChanges']))
+        d.addCallback(check)
 
-    def test_paramlist_multiple(self):
-        self.dbc.paramstyle = "format" # override default
-        self.assertEqual(self.dbc.parmlist(3), "(%s,%s,%s)")
+        # shut down the service lest we leave an unclean reactor
+        d.addCallback(lambda _ : self.dbc.stopService())
 
-    def test_runQueryNow_simple(self):
-        self.assertEqual(self.dbc.runQueryNow("SELECT 1"),
-                         [(1,)])
+        # take advantage of the fact that TimerService runs immediately; otherwise, we'd need to find
+        # a way to inject task.Clock into it
+        reactor.callLater(0.001, d.callback, None)
 
-    def test_runQueryNow_exception(self):
-        self.assertRaises(Exception, lambda :
-            self.dbc.runQueryNow("EAT * FROM cookies"))
-
-    def test_runInterationNow_simple(self):
-        def inter(cursor, *args, **kwargs):
-            self.assertEqual(cursor.execute("SELECT 1").fetchall(),
-                             [(1,)])
-        self.dbc.runInteractionNow(inter)
-
-    def test_runInterationNow_args(self):
-        def inter(cursor, *args, **kwargs):
-            self.assertEqual((args, kwargs), ((1, 2), dict(three=4)))
-            cursor.execute("SELECT 1")
-        self.dbc.runInteractionNow(inter, 1, 2, three=4)
-
-    def test_runInterationNow_exception(self):
-        def inter(cursor):
-            cursor.execute("GET * WHERE golden")
-        self.assertRaises(Exception, lambda : 
-            self.dbc.runInteractionNow(inter))
-
-    def test_runQuery_simple(self):
-        d = self.dbc.runQuery("SELECT 1")
-        def cb(res):
-            self.assertEqual(res, [(1,)])
-        d.addCallback(cb)
         return d

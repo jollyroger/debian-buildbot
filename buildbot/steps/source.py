@@ -18,6 +18,7 @@ from warnings import warn
 from email.Utils import formatdate
 from twisted.python import log
 from buildbot.process.buildstep import LoggingBuildStep, LoggedRemoteCommand
+from buildbot.process.properties import WithProperties
 from buildbot.interfaces import BuildSlaveTooOldError
 from buildbot.status.builder import SKIPPED
 
@@ -185,9 +186,6 @@ class Source(LoggingBuildStep):
         source step took and the Change 'repository' property
         '''
 
-        assert not repository or callable(repository) or isinstance(repository, dict) or \
-            isinstance(repository, str) or isinstance(repository, unicode)
-
         s = self.build.getSourceStamp()
         props = self.build.getProperties()
 
@@ -199,6 +197,8 @@ class Source(LoggingBuildStep):
                 return str(props.render(repository(s.repository)))
             elif isinstance(repository, dict):
                 return str(props.render(repository.get(s.repository)))
+            elif isinstance(repository, WithProperties):
+                return str(props.render(repository))
             else: # string or unicode
                 try:
                     repourl = str(repository % s.repository)
@@ -223,14 +223,15 @@ class Source(LoggingBuildStep):
         # what source stamp would this build like to use?
         s = self.build.getSourceStamp()
         # if branch is None, then use the Step's "default" branch
-        branch = s.branch or self.branch
+        branch = s.branch or properties.render(self.branch)
         # if revision is None, use the latest sources (-rHEAD)
         revision = s.revision
         if not revision and not self.alwaysUseLatest:
             revision = self.computeSourceRevision(s.changes)
             # the revision property is currently None, so set it to something
             # more interesting
-            self.setProperty('revision', str(revision), "Source")
+            if revision is not None:
+                self.setProperty('revision', str(revision), "Source")
 
         # if patch is None, then do not patch the tree after checkout
 
@@ -447,7 +448,7 @@ class CVS(Source):
         if self.checkoutDelay is not None:
             when = lastChange + self.checkoutDelay
         else:
-            lastSubmit = max([r.submittedAt for r in self.build.requests])
+            lastSubmit = max([br.submittedAt for br in self.build.requests])
             when = (lastChange + lastSubmit) / 2
         return formatdate(when)
 
@@ -814,6 +815,7 @@ class Git(Source):
         """
         Source.__init__(self, **kwargs)
         self.repourl = repourl
+        self.branch = branch
         self.addFactoryArguments(repourl=repourl,
                                  branch=branch,
                                  submodules=submodules,
@@ -822,8 +824,7 @@ class Git(Source):
                                  shallow=shallow,
                                  progress=progress,
                                  )
-        self.args.update({'branch': branch,
-                          'submodules': submodules,
+        self.args.update({'submodules': submodules,
                           'ignore_ignores': ignore_ignores,
                           'reference': reference,
                           'shallow': shallow,
@@ -836,9 +837,7 @@ class Git(Source):
         return changes[-1].revision
 
     def startVC(self, branch, revision, patch):
-        if branch is not None:
-            self.args['branch'] = branch
-
+        self.args['branch'] = branch
         self.args['repourl'] = self.computeRepositoryURL(self.repourl)
         self.args['revision'] = revision
         self.args['patch'] = patch
@@ -1282,3 +1281,66 @@ class P4Sync(Source):
         assert slavever, "slave is too old, does not know about p4"
         cmd = LoggedRemoteCommand("p4sync", self.args)
         self.startCommand(cmd)
+
+
+class Monotone(Source):
+    """Check out a source tree from a monotone repository 'repourl'."""
+
+    name = "mtn"
+
+    def __init__(self, repourl=None, branch=None, progress=False, **kwargs):
+        """
+        @type  repourl: string
+        @param repourl: the URI which points at the monotone repository.
+
+        @type  branch: string
+        @param branch: The branch or tag to check out by default. If
+                       a build specifies a different branch, it will
+                       be used instead of this.
+
+        @type  progress: boolean
+        @param progress: Pass the --ticker=dot option when pulling. This
+                         can solve long fetches getting killed due to
+                         lack of output.
+        """
+        Source.__init__(self, **kwargs)
+        self.repourl = repourl
+        if (not repourl):
+            raise ValueError("you must provide a repository uri in 'repourl'")
+        if (not branch):
+            raise ValueError("you must provide a default branch in 'branch'")
+        self.addFactoryArguments(repourl=repourl,
+                                 branch=branch,
+                                 progress=progress,
+                                 )
+        self.args.update({'branch': branch,
+                          'progress': progress,
+                          })
+
+    def startVC(self, branch, revision, patch):
+        slavever = self.slaveVersion("mtn")
+        if not slavever:
+            raise BuildSlaveTooOldError("slave is too old, does not know "
+                                        "about mtn")
+
+        self.args['repourl'] = self.computeRepositoryURL(self.repourl)
+        if branch:
+            self.args['branch'] = branch
+        self.args['revision'] = revision
+        self.args['patch'] = patch
+
+        cmd = LoggedRemoteCommand("mtn", self.args)
+        self.startCommand(cmd)
+
+    def computeSourceRevision(self, changes):
+        if not changes:
+            return None
+        # without knowing the revision ancestry graph, we can't sort the
+        # changes at all. So for now, assume they were given to us in sorted
+        # order, and just pay attention to the last one. See ticket #103 for
+        # more details.
+        if len(changes) > 1:
+            log.msg("Monotone.computeSourceRevision: warning: "
+                    "there are %d changes here, assuming the last one is "
+                    "the most recent" % len(changes))
+        return changes[-1].revision

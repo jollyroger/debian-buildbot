@@ -14,7 +14,7 @@
 # Copyright Buildbot Team Members
 
 
-from buildbot.status.builder import SUCCESS, FAILURE, WARNINGS
+from buildbot.status.results import SUCCESS, FAILURE, WARNINGS
 from buildbot.steps.shell import ShellCommand
 import re
 
@@ -155,8 +155,8 @@ class PyLint(ShellCommand):
 
     _re_groupname = 'errtype'
     _msgtypes_re_str = '(?P<%s>[%s])' % (_re_groupname, ''.join(MESSAGES.keys()))
-    _default_line_re = re.compile(r'%s\d{4}: *\d+:.+' % _msgtypes_re_str)
-    _parseable_line_re = re.compile(r'[^:]+:\d+: \[%s\d{4}[,\]] .+' % _msgtypes_re_str)
+    _default_line_re = re.compile(r'^%s: *\d+:.+' % _msgtypes_re_str)
+    _parseable_line_re = re.compile(r'[^:]+:\d+: \[%s[,\]] .+' % _msgtypes_re_str)
 
     def createSummary(self, log):
         counts = {}

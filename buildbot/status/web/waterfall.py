@@ -16,13 +16,15 @@
 
 from zope.interface import implements
 from twisted.python import log, components
+from twisted.internet import defer
 import urllib
 
 import time, locale
 import operator
 
 from buildbot import interfaces, util
-from buildbot.status import builder
+from buildbot.status import builder, buildstep, build
+from buildbot.changes import changes
 
 from buildbot.status.web.base import Box, HtmlResource, IBox, ICurrentBox, \
      ITopBox, build_get_class, path_to_build, path_to_step, path_to_root, \
@@ -66,7 +68,7 @@ class CurrentBox(components.Adapter):
         abstime = time.strftime("%H:%M", time.localtime(util.now()+eta))
         return [prefix, " ".join(eta_parts), "at %s" % abstime]
 
-    def getBox(self, status):
+    def getBox(self, status, brcounts):
         # getState() returns offline, idle, or building
         state, builds = self.original.getState()
 
@@ -105,12 +107,13 @@ class CurrentBox(components.Adapter):
         # when the builder is otherwise idle.
 
         # are any builds pending? (waiting for a slave to be free)
-        pbs = self.original.getPendingBuilds()
-        if pbs:
-            text.append("%d pending" % len(pbs))
+        brcount = brcounts[builderName]
+        if brcount:
+            text.append("%d pending" % brcount)
         for t in upcoming:
-            eta = t - util.now()
-            text.extend(self.formatETA("next in", eta))
+            if t is not None:
+                eta = t - util.now()
+                text.extend(self.formatETA("next in", eta))
         return Box(text, class_="Activity " + state)
 
 components.registerAdapter(CurrentBox, builder.BuilderStatus, ICurrentBox)
@@ -156,7 +159,7 @@ class BuildBox(components.Adapter):
             # of whether it succeeded or failed.
             class_ = build_get_class(b)
         return Box([text], class_="BuildStep " + class_)
-components.registerAdapter(BuildBox, builder.BuildStatus, IBox)
+components.registerAdapter(BuildBox, build.BuildStatus, IBox)
 
 class StepBox(components.Adapter):
     implements(IBox)
@@ -188,7 +191,7 @@ class StepBox(components.Adapter):
         
         class_ = "BuildStep " + build_get_class(self.original)
         return Box(text, class_=class_)
-components.registerAdapter(StepBox, builder.BuildStepStatus, IBox)
+components.registerAdapter(StepBox, buildstep.BuildStepStatus, IBox)
 
 
 class EventBox(components.Adapter):
@@ -263,7 +266,7 @@ def insertGaps(g, showEvents, lastEventTime, idleGap=2):
 
 
 class WaterfallHelp(HtmlResource):
-    title = "Waterfall Help"
+    pageTitle = "Waterfall Help"
 
     def __init__(self, categories=None):
         HtmlResource.__init__(self)
@@ -304,6 +307,25 @@ class WaterfallHelp(HtmlResource):
         return template.render(**cxt)
 
 
+class ChangeEventSource(object):
+    "A wrapper around a list of changes to supply the IEventSource interface"
+    def __init__(self, changes):
+        self.changes = changes
+        # we want them in newest-to-oldest order
+        self.changes.reverse()
+
+    def eventGenerator(self, branches, categories, committers, minTime):
+        for change in self.changes:
+            if branches and change.branch not in branches:
+                continue
+            if categories and change.category not in categories:
+                continue
+            if committers and change.author not in committers:
+                continue
+            if minTime and change.when < minTime:
+                continue
+            yield change
+
 class WaterfallStatusResource(HtmlResource):
     """This builds the main status page, with the waterfall display, and
     all child pages."""
@@ -315,9 +337,9 @@ class WaterfallStatusResource(HtmlResource):
         self.num_events_max=num_events_max
         self.putChild("help", WaterfallHelp(categories))
 
-    def getTitle(self, request):
+    def getPageTitle(self, request):
         status = self.getStatus(request)
-        p = status.getProjectName()
+        p = status.getTitle()
         if p:
             return "BuildBot: %s" % p
         else:
@@ -366,6 +388,47 @@ class WaterfallStatusResource(HtmlResource):
 
     def content(self, request, ctx):
         status = self.getStatus(request)
+        master = request.site.buildbot_service.master
+
+        # before calling content_with_db_data, make a bunch of database
+        # queries.  This is a sick hack, but beats rewriting the entire
+        # waterfall around asynchronous calls
+
+        results = {}
+
+        # recent changes
+        changes_d = master.db.changes.getRecentChanges(40)
+        def to_changes(chdicts):
+            return defer.gatherResults([
+                changes.Change.fromChdict(master, chdict)
+                for chdict in chdicts ])
+        changes_d.addCallback(to_changes)
+        def keep_changes(changes):
+            results['changes'] = changes
+        changes_d.addCallback(keep_changes)
+
+        # build request counts for each builder
+        allBuilderNames = status.getBuilderNames(categories=self.categories)
+        brstatus_ds = []
+        brcounts = {}
+        def keep_count(statuses, builderName):
+            brcounts[builderName] = len(statuses)
+        for builderName in allBuilderNames:
+            builder_status = status.getBuilder(builderName)
+            d = builder_status.getPendingBuildRequestStatuses()
+            d.addCallback(keep_count, builderName)
+            brstatus_ds.append(d)
+
+        # wait for it all to finish
+        d = defer.gatherResults([ changes_d ] + brstatus_ds)
+        def call_content(_):
+            return self.content_with_db_data(results['changes'],
+                    brcounts, request, ctx)
+        d.addCallback(call_content)
+        return d
+
+    def content_with_db_data(self, changes, brcounts, request, ctx):
+        status = self.getStatus(request)
         ctx['refresh'] = self.get_reload_time(request)
 
         # we start with all Builders available to this Waterfall: this is
@@ -398,7 +461,7 @@ class WaterfallStatusResource(HtmlResource):
             builders = [b for b in builders if not self.isSuccess(b)]
         
         (changeNames, builderNames, timestamps, eventGrid, sourceEvents) = \
-                      self.buildGrid(request, builders)            
+                      self.buildGrid(request, builders, changes)
             
         # start the table: top-header material
         locale_enc = locale.getdefaultlocale()[1]
@@ -414,7 +477,7 @@ class WaterfallStatusResource(HtmlResource):
         for name in builderNames:
             builder = status.getBuilder(name)
             top_box = ITopBox(builder).getBox(request)
-            current_box = ICurrentBox(builder).getBox(status)
+            current_box = ICurrentBox(builder).getBox(status, brcounts)
             bn.append({'name': name,
                        'url': request.childLink("../builders/%s" % urllib.quote(name, safe='')), 
                        'top': top_box.text, 
@@ -468,7 +531,7 @@ class WaterfallStatusResource(HtmlResource):
         data = template.render(**ctx)
         return data
     
-    def buildGrid(self, request, builders):
+    def buildGrid(self, request, builders, changes):
         debug = False
         # TODO: see if we can use a cached copy
 
@@ -499,7 +562,7 @@ class WaterfallStatusResource(HtmlResource):
         # (commit, all builders) if they have any events there. Build up the
         # array of events, and stop when we have a reasonable number.
 
-        commit_source = self.getChangeManager(request)
+        commit_source = ChangeEventSource(changes)
 
         lastEventTime = util.now()
         sources = [commit_source] + builders

@@ -37,7 +37,7 @@ except ImportError:
 
 from buildbot import interfaces, util
 from buildbot.status import base
-from buildbot.status.builder import FAILURE, SUCCESS, Results
+from buildbot.status.results import FAILURE, SUCCESS, Results
 
 VALID_EMAIL = re.compile("[a-zA-Z0-9\.\_\%\-\+]+@[a-zA-Z0-9\.\_\%\-]+.[a-zA-Z]{2,6}")
 
@@ -80,7 +80,7 @@ def defaultMessage(mode, name, build, results, master_status):
     if ss and ss.project:
         project = ss.project
     else:
-        project = master_status.getProjectName()
+        project = master_status.getTitle()
     text += " on builder %s while building %s.\n" % (name, project)
     if master_status.getURLForThing(build):
         text += "Full details are available at:\n %s\n" % master_status.getURLForThing(build)
@@ -153,9 +153,11 @@ class MailNotifier(base.StatusReceiverMultiService):
                      "subject", "sendToInterestedUsers", "customMesg",
                      "messageFormatter", "extraHeaders"]
 
+    possible_modes = ('all', 'failing', 'problem', 'change', 'passing', 'warnings')
+
     def __init__(self, fromaddr, mode="all", categories=None, builders=None,
-                 addLogs=False, relayhost="localhost",
-                 subject="buildbot %(result)s in %(projectName)s on %(builder)s",
+                 addLogs=False, relayhost="localhost", buildSetSummary=False,
+                 subject="buildbot %(result)s in %(title)s on %(builder)s",
                  lookup=None, extraRecipients=[],
                  sendToInterestedUsers=True, customMesg=None,
                  messageFormatter=defaultMessage, extraHeaders=None,
@@ -186,7 +188,7 @@ class MailNotifier(base.StatusReceiverMultiService):
                         builder which provoked the message.
 
         @type  mode: string (defaults to all)
-        @param mode: one of:
+        @param mode: one of MailNotifer.possible_modes:
                      - 'all': send mail about all builds, passing and failing
                      - 'failing': only send mail about builds which fail
                      - 'warnings': send mail if builds contain warnings or fail 
@@ -219,7 +221,12 @@ class MailNotifier(base.StatusReceiverMultiService):
         @type  relayhost: string
         @param relayhost: the host to which the outbound SMTP connection
                           should be made. Defaults to 'localhost'
-
+                          
+        @type  buildSetSummary: boolean
+        @param buildSetSummary: if True, this notifier will only send a summary
+                                email when a buildset containing any of its
+                                watched builds completes
+                                
         @type  lookup:    implementor of {IEmailLookup}
         @param lookup:    object which provides IEmailLookup, which is
                           responsible for mapping User names for Interested
@@ -280,7 +287,7 @@ class MailNotifier(base.StatusReceiverMultiService):
         self.extraRecipients = extraRecipients
         self.sendToInterestedUsers = sendToInterestedUsers
         self.fromaddr = fromaddr
-        assert mode in ('all', 'failing', 'problem', 'change', 'passing', 'warnings')
+        assert mode in MailNotifier.possible_modes
         self.mode = mode
         self.categories = categories
         self.builders = builders
@@ -302,6 +309,8 @@ class MailNotifier(base.StatusReceiverMultiService):
         self.smtpUser = smtpUser
         self.smtpPassword = smtpPassword
         self.smtpPort = smtpPort
+        self.buildSetSummary = buildSetSummary
+        self.buildSetSubscription = None
         self.watched = []
         self.master_status = None
 
@@ -323,6 +332,22 @@ class MailNotifier(base.StatusReceiverMultiService):
     def setup(self):
         self.master_status = self.parent.getStatus()
         self.master_status.subscribe(self)
+        
+            
+    def startService(self):
+        if self.buildSetSummary:
+            self.buildSetSubscription = \
+            self.parent.subscribeToBuildsetCompletions(self.buildsetFinished)
+ 
+        base.StatusReceiverMultiService.startService(self)
+        
+   
+    def stopService(self):
+        if self.buildSetSubscription is not None:
+            self.buildSetSubscription.unsubscribe()
+            self.buildSetSubscription = None
+            
+        return base.StatusReceiverMultiService.stopService(self)
 
     def disownServiceParent(self):
         self.master_status.unsubscribe(self)
@@ -345,38 +370,79 @@ class MailNotifier(base.StatusReceiverMultiService):
         pass
     def buildStarted(self, name, build):
         pass
-    def buildFinished(self, name, build, results):
+    def isMailNeeded(self, build, results):
         # here is where we actually do something.
         builder = build.getBuilder()
-        if self.builders is not None and name not in self.builders:
-            return # ignore this build
+        if self.builders is not None and builder.name not in self.builders:
+            return False # ignore this build
         if self.categories is not None and \
                builder.category not in self.categories:
-            return # ignore this build
+            return False # ignore this build
 
         if self.mode == "warnings" and results == SUCCESS:
-            return
+            return False
         if self.mode == "failing" and results != FAILURE:
-            return
+            return False
         if self.mode == "passing" and results != SUCCESS:
-            return
+            return False
         if self.mode == "problem":
             if results != FAILURE:
-                return
+                return False
             prev = build.getPreviousBuild()
             if prev and prev.getResults() == FAILURE:
-                return
+                return False
         if self.mode == "change":
             prev = build.getPreviousBuild()
             if not prev or prev.getResults() == results:
-                return
-        # for testing purposes, buildMessage returns a Deferred that fires
-        # when the mail has been sent. To help unit tests, we return that
-        # Deferred here even though the normal IStatusReceiver.buildFinished
-        # signature doesn't do anything with it. If that changes (if
-        # .buildFinished's return value becomes significant), we need to
-        # rearrange this.
-        return self.buildMessage(name, build, results)
+                return False
+        
+        return True
+
+    def buildFinished(self, name, build, results):
+        if ( not self.buildSetSummary and
+             self.isMailNeeded(build, results) ):
+            # for testing purposes, buildMessage returns a Deferred that fires
+            # when the mail has been sent. To help unit tests, we return that
+            # Deferred here even though the normal IStatusReceiver.buildFinished
+            # signature doesn't do anything with it. If that changes (if
+            # .buildFinished's return value becomes significant), we need to
+            # rearrange this.
+            return self.buildMessage(name, [build], results)
+        return None
+    
+    def _gotBuilds(self, res, builddicts, buildset, builders):
+        builds = []
+        for (builddictlist, builder) in zip(builddicts, builders):
+                for builddict in builddictlist:
+                    build = builder.getBuild(builddict['number'])
+                    if self.isMailNeeded(build, build.results):
+                        builds.append(build)
+
+        self.buildMessage("Buildset Complete: " + buildset['reason'], builds,
+                          buildset['results'])
+        
+    def _gotBuildRequests(self, breqs, buildset):
+        builddicts = []
+        builders =[]
+        dl = []
+        for breq in breqs:
+            buildername = breq['buildername']
+            builders.append(self.master_status.getBuilder(buildername))
+            d = self.parent.db.builds.getBuildsForRequest(breq['brid'])
+            d.addCallback(builddicts.append)
+            dl.append(d)
+        d = defer.DeferredList(dl)
+        d.addCallback(self._gotBuilds, builddicts, buildset, builders)
+
+    def _gotBuildSet(self, buildset, bsid):
+        d = self.parent.db.buildrequests.getBuildRequests(bsid=bsid)
+        d.addCallback(self._gotBuildRequests, buildset)
+        
+    def buildsetFinished(self, bsid, result):
+        d = self.parent.db.buildsets.getBuildset(bsid=bsid)
+        d.addCallback(self._gotBuildSet, bsid)
+            
+        return d
 
     def getCustomMesgData(self, mode, name, build, results, master_status):
         #
@@ -390,12 +456,14 @@ class MailNotifier(base.StatusReceiverMultiService):
             logStatus, dummy = logStep.getResults()
             logName = logf.getName()
             logs.append(('%s.%s' % (stepName, logName),
-                         '%s/steps/%s/logs/%s' % (master_status.getURLForThing(build), stepName, logName),
+                         '%s/steps/%s/logs/%s' % (
+                             master_status.getURLForThing(build),
+                             stepName, logName),
                          logf.getText().splitlines(),
                          logStatus))
 
         attrs = {'builderName': name,
-                 'projectName': master_status.getProjectName(),
+                 'title': master_status.getTitle(),
                  'mode': mode,
                  'result': Results[results],
                  'buildURL': master_status.getURLForThing(build),
@@ -420,22 +488,24 @@ class MailNotifier(base.StatusReceiverMultiService):
 
         return attrs
 
-    def createEmail(self, msgdict, builderName, projectName, results, build,
-                    patch=None, logs=None):
+    def createEmail(self, msgdict, builderName, title, results, builds=None,
+                    patches=None, logs=None):
         text = msgdict['body'].encode(ENCODING)
         type = msgdict['type']
         if 'subject' in msgdict:
             subject = msgdict['subject'].encode(ENCODING)
         else:
             subject = self.subject % { 'result': Results[results],
-                                       'projectName': projectName,
+                                       'projectName': title,
+                                       'title': title,
                                        'builder': builderName,
                                        }
 
 
-        assert type in ('plain', 'html'), "'%s' message type must be 'plain' or 'html'." % type
+        assert type in ('plain', 'html'), \
+            "'%s' message type must be 'plain' or 'html'." % type
 
-        if patch or logs:
+        if patches or logs:
             m = MIMEMultipart()
             m.attach(MIMEText(text, type, ENCODING))
         else:
@@ -448,65 +518,92 @@ class MailNotifier(base.StatusReceiverMultiService):
         m['From'] = self.fromaddr
         # m['To'] is added later
 
-        if patch:
-            a = MIMEText(patch[1].encode(ENCODING), _charset=ENCODING)
-            a.add_header('Content-Disposition', "attachment",
-                         filename="source patch")
-            m.attach(a)
+        if patches:
+            for (i, patch) in enumerate(patches):
+                a = MIMEText(patch[1].encode(ENCODING), _charset=ENCODING)
+                a.add_header('Content-Disposition', "attachment",
+                         filename="source patch " + str(i) )
+                m.attach(a)
         if logs:
             for log in logs:
                 name = "%s.%s" % (log.getStep().getName(),
                                   log.getName())
-                if self._shouldAttachLog(log.getName()) or self._shouldAttachLog(name):
+                if ( self._shouldAttachLog(log.getName()) or
+                     self._shouldAttachLog(name) ):
                     a = MIMEText(log.getText().encode(ENCODING), 
                                  _charset=ENCODING)
                     a.add_header('Content-Disposition', "attachment",
                                  filename=name)
                     m.attach(a)
 
+        #@todo: is there a better way to do this?
         # Add any extra headers that were requested, doing WithProperties
-        # interpolation if necessary
+        # interpolation if only one build was given
         if self.extraHeaders:
-            properties = build.getProperties()
+            if len(builds) == 1:
+                properties = builds[0].getProperties()
+                
             for k,v in self.extraHeaders.items():
-                k = properties.render(k)
+                if len(builds == 1):
+                    k = properties.render(k)
                 if k in m:
-                    twlog.msg("Warning: Got header " + k + " in self.extraHeaders "
-                          "but it already exists in the Message - "
-                          "not adding it.")
-                    continue
-                m[k] = properties.render(v)
-
+                    twlog.msg("Warning: Got header " + k +
+                      " in self.extraHeaders "
+                      "but it already exists in the Message - "
+                      "not adding it.")
+                continue
+                if len(builds == 1):
+                    m[k] = properties.render(v)
+                else:
+                    m[k] = v
+    
         return m
-
-    def buildMessage(self, name, build, results):
+    
+    def buildMessageDict(self, name, build, results):
         if self.customMesg:
             # the customMesg stuff can be *huge*, so we prefer not to load it
-            attrs = self.getCustomMesgData(self.mode, name, build, results, self.master_status)
+            attrs = self.getCustomMesgData(self.mode, name, build, results,
+                                           self.master_status)
             text, type = self.customMesg(attrs)
             msgdict = { 'body' : text, 'type' : type }
         else:
-            msgdict = self.messageFormatter(self.mode, name, build, results, self.master_status)
+            msgdict = self.messageFormatter(self.mode, name, build, results,
+                                            self.master_status)
+        
+        return msgdict
 
-        patch = None
-        ss = build.getSourceStamp()
-        if ss and ss.patch and self.addPatch:
-            patch == ss.patch
-        logs = None
-        if self.addLogs:
-            logs = build.getLogs()
+
+    def buildMessage(self, name, builds, results):
+        patches = []
+        logs = []
+        msgdict = {"body":""}
+        
+        for build in builds:
+            ss = build.getSourceStamp()
+            if ss and ss.patch and self.addPatch:
+                patches.append(ss.patch)
+            if self.addLogs:
+                logs.append(build.getLogs())
             twlog.err("LOG: %s" % str(logs))
-        m = self.createEmail(msgdict, name, self.master_status.getProjectName(),
-                             results, build, patch, logs)
+            
+            tmp = self.buildMessageDict(name=build.getBuilder().name,
+                                        build=build, results=build.results)
+            msgdict['body'] += tmp['body']
+            msgdict['body'] += '\n\n'
+            msgdict['type'] = tmp['type']
+            
+        m = self.createEmail(msgdict, name, self.master_status.getTitle(),
+                             results, builds, patches, logs)
 
         # now, who is this message going to?
         dl = []
         recipients = []
         if self.sendToInterestedUsers and self.lookup:
-            for u in build.getInterestedUsers():
-                d = defer.maybeDeferred(self.lookup.getAddress, u)
-                d.addCallback(recipients.append)
-                dl.append(d)
+            for build in builds:
+                for u in build.getInterestedUsers():
+                    d = defer.maybeDeferred(self.lookup.getAddress, u)
+                    d.addCallback(recipients.append)
+                    dl.append(d)
         d = defer.DeferredList(dl)
         d.addCallback(self._gotRecipients, recipients, m)
         return d

@@ -21,7 +21,6 @@ Standard setup script.
 
 import sys
 import os
-import re
 import glob
 
 from distutils.core import setup, Command
@@ -81,12 +80,11 @@ class TestCommand(_SetupBuildCommand):
         """
         from twisted.scripts.trial import run
 
+        # remove the 'test' option from argv
+        sys.argv.remove('test')
+
         # Mimick the trial script by adding the path as the last arg
         sys.argv.append(test_loc)
-
-        # No superuser should execute tests
-        if hasattr(os, "getuid") and os.getuid() == 0:
-            raise SystemExit('Do not test as a superuser! Exiting ...')
 
         # Add the current dir to path and pull it all together
         sys.path.insert(0, os.path.curdir)
@@ -201,7 +199,6 @@ setup_args = {
     'maintainer_email': "dustin@v.igoro.us",
     'url': "http://buildbot.net/",
     'license': "GNU GPL",
-    # does this classifiers= mean that this can't be installed on 2.2/2.3?
     'classifiers': [
         'Development Status :: 5 - Production/Stable',
         'Environment :: No Input/Output (Daemon)',
@@ -220,10 +217,11 @@ setup_args = {
               "buildbot.steps.package.rpm",
               "buildbot.process",
               "buildbot.clients",
+              "buildbot.monkeypatches",
               "buildbot.schedulers",
               "buildbot.scripts",
               "buildbot.db",
-              "buildbot.db.schema",
+              "buildbot.db.migrate.versions",
               "buildbot.util",
               "buildbot.test",
               "buildbot.test.fake",
@@ -231,18 +229,28 @@ setup_args = {
               "buildbot.test.util",
               "buildbot.test.regressions",
               ],
-    'data_files': [("buildbot", ["buildbot/buildbot.png"]),
-                include("buildbot/db/schema", "*.sql"),
-                ("buildbot/clients", ["buildbot/clients/debug.glade"]),
-                ("buildbot/status/web/files",
-                 ["buildbot/status/web/files/default.css",
-                  "buildbot/status/web/files/bg_gradient.jpg",
-                  "buildbot/status/web/files/robots.txt",
-                  "buildbot/status/web/files/favicon.ico",
-                  ]),
+    'data_files': [
+                ("buildbot", [
+                    "buildbot/buildbot.png",
+                ]),
+                ("buildbot/db/migrate", [
+                    "buildbot/db/migrate/migrate.cfg",
+                ]),
+                include("buildbot/db/migrate/versions", "*.py"),
+                ("buildbot/clients", [
+                    "buildbot/clients/debug.glade",
+                ]),
+                ("buildbot/status/web/files", [
+                    "buildbot/status/web/files/default.css",
+                    "buildbot/status/web/files/bg_gradient.jpg",
+                    "buildbot/status/web/files/robots.txt",
+                    "buildbot/status/web/files/favicon.ico",
+                ]),
                 include("buildbot/status/web/templates", '*.html'),
                 include("buildbot/status/web/templates", '*.xml'),
-                ("buildbot/scripts", ["buildbot/scripts/sample.cfg"]),
+                ("buildbot/scripts", [
+                    "buildbot/scripts/sample.cfg",
+                ]),
                 ],
     'scripts': scripts,
     'cmdclass': {'install_data': install_data_twisted,
@@ -269,8 +277,11 @@ except ImportError:
 else:
     ## dependencies
     setup_args['install_requires'] = [
-        'twisted >= 2.0.0',
+        'twisted >= 8.0.0',
         'Jinja2 >= 2.1',
+        'sqlalchemy >= 0.6',
+        # buildbot depends on sqlalchemy internals. See buildbot.db.model.
+        'sqlalchemy-migrate == 0.6',
     ]
     # Python-2.6 and up includes json
     if not py_26:

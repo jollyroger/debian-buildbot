@@ -17,9 +17,11 @@ import time
 from xml.dom import minidom
 
 from twisted.python import log
+from twisted.internet import defer
 from twisted.web import client
 
-from buildbot.changes import base, changes
+from buildbot.changes import base
+from buildbot.util import epoch2datetime
 
 class InvalidResultError(Exception):
     def __init__(self, value="InvalidResultError"):
@@ -204,8 +206,6 @@ class BonsaiPoller(base.PollingChangeSource):
     compare_attrs = ["bonsaiURL", "pollInterval", "tree",
                      "module", "branch", "cvsroot"]
 
-    parent = None # filled in when we're added
-
     def __init__(self, bonsaiURL, module, branch, tree="default",
                  cvsroot="/cvsroot", pollInterval=30, project=''):
         self.bonsaiURL = bonsaiURL
@@ -253,6 +253,7 @@ class BonsaiPoller(base.PollingChangeSource):
         # get the page, in XML format
         return client.getPage(url, timeout=self.pollInterval)
 
+    @defer.deferredGenerator
     def _process_changes(self, query):
         try:
             bp = BonsaiParser(query)
@@ -266,10 +267,12 @@ class BonsaiPoller(base.PollingChangeSource):
         for cinode in result.nodes:
             files = [file.filename + ' (revision '+file.revision+')'
                      for file in cinode.files]
-            c = changes.Change(who = cinode.who,
+            self.lastChange = self.lastPoll
+            w = defer.waitForDeferred(
+                    self.master.addChange(author = cinode.who,
                                files = files,
                                comments = cinode.log,
-                               when = cinode.date,
-                               branch = self.branch)
-            self.parent.addChange(c)
-            self.lastChange = self.lastPoll
+                               when_timestamp = epoch2datetime(cinode.date),
+                               branch = self.branch))
+            yield w
+            w.getResult()

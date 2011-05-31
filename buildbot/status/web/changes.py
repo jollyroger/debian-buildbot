@@ -22,15 +22,22 @@ from buildbot.changes.changes import Change
 from buildbot.status.web.base import HtmlResource, IBox, Box
 
 class ChangeResource(HtmlResource):
-    def __init__(self, change, num):
-        self.change = change
-        self.title = "Change #%d" % num
-        
+    def __init__(self, changeid):
+        self.changeid = changeid
+        self.pageTitle = "Change #%d" % changeid
+
     def content(self, req, cxt):
-        cxt['c'] = self.change.asDict()
-        template = req.site.buildbot_service.templates.get_template("change.html")
-        data = template.render(cxt)
-        return data      
+        d = self.getStatus(req).getChange(self.changeid)
+        def cb(change):
+            if not change:
+                return "No change number %d" % self.changeid
+            templates = req.site.buildbot_service.templates
+            cxt['c'] = change.asDict()
+            template = templates.get_template("change.html")
+            data = template.render(cxt)
+            return data
+        d.addCallback(cb)
+        return d
 
 # /changes/NN
 class ChangesResource(HtmlResource):
@@ -39,19 +46,15 @@ class ChangesResource(HtmlResource):
         cxt['sources'] = self.getStatus(req).getChangeSources()
         template = req.site.buildbot_service.templates.get_template("change_sources.html")
         return template.render(**cxt)
-    
 
     def getChild(self, path, req):
         try:
-            num = int(path)
-            c = self.getStatus(req).getChange(num)
+            changeid = int(path)
         except ValueError:
-            c = None
-            num = path
-        if not c:
-            return NoResource("No change number '%s'" % path)    
-        return ChangeResource(c, num)
-    
+            return NoResource("Expected a change number")
+
+        return ChangeResource(changeid)
+
 class ChangeBox(components.Adapter):
     implements(IBox)
 
@@ -60,7 +63,7 @@ class ChangeBox(components.Adapter):
         template = req.site.buildbot_service.templates.get_template("change_macros.html")
         text = template.module.box_contents(url=url,
                                             who=self.original.getShortAuthor(),
-                                            title=self.original.comments)
+                                            pageTitle=self.original.comments)
         return Box([text], class_="Change")
 components.registerAdapter(ChangeBox, Change, IBox)
 

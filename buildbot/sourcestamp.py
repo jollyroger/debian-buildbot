@@ -16,8 +16,11 @@
 
 from zope.interface import implements
 from twisted.persisted import styles
+from twisted.internet import defer
+from buildbot.changes.changes import Change
 from buildbot import util, interfaces
 
+# TODO: kill this class, or at least make it less significant
 class SourceStamp(util.ComparableMixin, styles.Versioned):
     """This is a tuple of (branch, revision, patchspec, changes, project, repository).
 
@@ -36,6 +39,22 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
        step check out the latest revision indicated by the given Changes.
        CHANGES is a tuple of L{buildbot.changes.changes.Change} instances,
        and all must be on the same branch.
+
+    @ivar ssid: sourcestamp ID, or None if this sourcestamp has not yet been
+    added to the database
+
+    @ivar branch: branch name or None
+
+    @ivar revision: revision string or None
+
+    @ivar patch: tuple (patch level, patch body) or None
+
+    @ivar changes: tuple of changes that went into this source stamp, sorted by
+    number
+
+    @ivar project: project name
+
+    @ivar repository: repository URL
     """
 
     persistenceVersion = 2
@@ -48,22 +67,75 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
     changes = ()
     project = ''
     repository = ''
-    ssid = None # filled in by db.get_sourcestampid()
+    ssid = None
 
     compare_attrs = ('branch', 'revision', 'patch', 'changes', 'project', 'repository')
 
     implements(interfaces.ISourceStamp)
 
+    @classmethod
+    def fromSsdict(cls, master, ssdict):
+        """
+        Class method to create a L{SourceStamp} from a dictionary as returned
+        by L{SourceStampConnectorComponent.getSourceStamp}.
+
+        @param master: build master instance
+        @param ssdict: source stamp dictionary
+
+        @returns: L{SourceStamp} via Deferred
+        """
+        # try to fetch from the cache, falling back to _make_ss if not
+        # found
+        cache = master.caches.get_cache("SourceStamps", cls._make_ss)
+        return cache.get(ssdict['ssid'], ssdict=ssdict, master=master)
+
+    @classmethod
+    def _make_ss(cls, ssid, ssdict, master):
+        sourcestamp = cls(_fromSsdict=True)
+        sourcestamp.ssid = ssid
+        sourcestamp.branch = ssdict['branch']
+        sourcestamp.revision = ssdict['revision']
+        sourcestamp.project = ssdict['project']
+        sourcestamp.repository = ssdict['repository']
+
+        sourcestamp.patch = None
+        if ssdict['patch_body']:
+            # note that this class does not store the patch_subdir
+            sourcestamp.patch = (ssdict['patch_level'], ssdict['patch_body'])
+
+        if ssdict['changeids']:
+            # sort the changeids in order, oldest to newest
+            sorted_changeids = sorted(ssdict['changeids'])
+            def gci(id):
+                d = master.db.changes.getChange(id)
+                d.addCallback(lambda chdict :
+                    Change.fromChdict(master, chdict))
+                return d
+            d = defer.gatherResults([ gci(id)
+                                for id in sorted_changeids ])
+        else:
+            d = defer.succeed([])
+        def got_changes(changes):
+            sourcestamp.changes = tuple(changes)
+            return sourcestamp
+        d.addCallback(got_changes)
+        return d
+
     def __init__(self, branch=None, revision=None, patch=None,
-                 changes=None, project='', repository=''):
+                 changes=None, project='', repository='', _fromSsdict=False,
+                 _ignoreChanges=False):
+        # skip all this madness if we're being built from the database
+        if _fromSsdict:
+            return
+
         if patch is not None:
             assert len(patch) == 2
             assert int(patch[0]) != -1
         self.branch = branch
         self.patch = patch
-        self.project = project
-        self.repository = repository
-        if changes:
+        self.project = project or ''
+        self.repository = repository or ''
+        if changes and not _ignoreChanges:
             self.changes = tuple(changes)
             # set branch and revision to most recent change
             self.branch = changes[-1].branch
@@ -78,8 +150,12 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
                 revision = str(revision)
 
         self.revision = revision
+        self._getSourceStampId_lock = defer.DeferredLock();
 
     def canBeMergedWith(self, other):
+        # this algorithm implements the "compatible" mergeRequests defined in
+        # detail in cfg-buidlers.texinfo; change that documentation if the
+        # algorithm changes!
         if other.repository != self.repository:
             return False
         if other.branch != self.branch:
@@ -88,9 +164,6 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
             return False
 
         if self.changes and other.changes:
-            # TODO: consider not merging these. It's a tradeoff between
-            # minimizing the number of builds and obtaining finer-grained
-            # results.
             return True
         elif self.changes and not other.changes:
             return False # we're using changes, they aren't
@@ -129,7 +202,8 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
     def getAbsoluteSourceStamp(self, got_revision):
         return SourceStamp(branch=self.branch, revision=got_revision,
                            patch=self.patch, repository=self.repository,
-                           project=self.project, changes=self.changes)
+                           project=self.project, changes=self.changes,
+                           _ignoreChanges=True)
 
     def getText(self):
         # note: this won't work for VC systems with huge 'revision' strings
@@ -175,4 +249,23 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         self.repository = ''
         self.wasUpgraded = True
 
-# vim: set ts=4 sts=4 sw=4 et:
+    @util.deferredLocked('_getSourceStampId_lock')
+    def getSourceStampId(self, master):
+        "temporary; do not use widely!"
+        if self.ssid:
+            return defer.succeed(self.ssid)
+        # add it to the DB
+        patch_body = None
+        patch_level = None
+        if self.patch:
+            patch_level, patch_body = self.patch
+        d = master.db.sourcestamps.addSourceStamp(
+                branch=self.branch, revision=self.revision,
+                repository=self.repository, project=self.project,
+                patch_body=patch_body, patch_level=patch_level,
+                patch_subdir=None, changeids=[c.number for c in self.changes])
+        def set_ssid(ssid):
+            self.ssid = ssid
+            return ssid
+        d.addCallback(set_ssid)
+        return d

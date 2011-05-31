@@ -26,6 +26,7 @@ control each.
 * Using Build Properties::
 * Source Checkout::
 * ShellCommand::
+* Slave Filesystem Steps::
 * Python BuildSteps::
 * Transferring Files::
 * Transferring Strings::
@@ -84,10 +85,10 @@ with @code{haltOnFailure=True} has failed.
 @item doStepIf
 A step can be configured to only run under certain conditions.  To do this, set
 the step's @code{doStepIf} to a boolean value, or to a function that returns a
-boolean value.  If the value or function result is false, then the step will
-return SKIPPED without doing anything.  Oherwise, the step will be executed
-normally.  If you set @code{doStepIf} to a function, that function should
-accept one parameter, which will be the @code{Step} object itself.
+boolean value or Deferred.  If the value or function result is false, then the
+step will return SKIPPED without doing anything.  Oherwise, the step will be
+executed normally.  If you set @code{doStepIf} to a function, that function
+should accept one parameter, which will be the @code{Step} object itself.
 
 @item locks
 a list of Locks (instances of @code{buildbot.locks.SlaveLock} or
@@ -134,9 +135,32 @@ class MakeTarball(ShellCommand):
 @end example
 
 @menu
+* Property::
 * WithProperties::
 * Common Build Properties::
 @end menu
+
+@node Property
+@subsubsection Property
+@cindex Property
+
+You can use build properties in most step paramaters.  Please file bugs for any
+parameters which do not accept properties.  The simplest form is to wrap the
+property name with @code{Property}, passing an optional default argument.
+
+@example
+from buildbot.steps.trigger import Trigger
+form buildbot.process.properties import Property
+
+f.addStep(Trigger(waitForFinish=False, schedulerNames=['build-dependents'], alwaysUseLatest=True,
+			set_properties=@{'coq_revision': Property("got_revision")@}))
+@end example
+
+You can specify a default value by passing a @code{default} argument to
+@code{Property}. This is normally used when the property doesn't exist,
+or when the value is something Python regards as "false". The @code{defaultWhenFalse}
+argument can be used to force buildbot to use the default argument only
+if the parameter is not set.
 
 @node WithProperties
 @subsubsection WithProperties
@@ -146,32 +170,11 @@ You can use build properties in ShellCommands by using the
 @code{WithProperties} wrapper when setting the arguments of
 the ShellCommand. This interpolates the named build properties
 into the generated shell command.  Most step parameters accept
-@code{WithProperties}.  Please file bugs for any parameters which
-do not.
+@code{WithProperties}.
 
-@example
-from buildbot.steps.shell import ShellCommand
-from buildbot.process.properties import WithProperties
-
-f.addStep(ShellCommand(
-          command=["tar", "czf",
-                   WithProperties("build-%s.tar.gz", "revision"),
-                   "source"]))
-@end example
-
-If this BuildStep were used in a tree obtained from Subversion, it
-would create a tarball with a name like @file{build-1234.tar.gz}.
-
-The @code{WithProperties} function does @code{printf}-style string
-interpolation, using strings obtained by calling
-@code{build.getProperty(propname)}. Note that for every @code{%s} (or
-@code{%d}, etc), you must have exactly one additional argument to
-indicate which build property you want to insert.
-
-You can also use python dictionary-style string interpolation by using
+You can use python dictionary-style string interpolation by using
 the @code{%(propname)s} syntax. In this form, the property name goes
-in the parentheses, and WithProperties takes @emph{no} additional
-arguments:
+in the parentheses:
 
 @example
 f.addStep(ShellCommand(
@@ -179,6 +182,9 @@ f.addStep(ShellCommand(
                    WithProperties("build-%(revision)s.tar.gz"),
                    "source"]))
 @end example
+
+If this BuildStep were used in a tree obtained from Subversion, it
+would create a tarball with a name like @file{build-1234.tar.gz}.
 
 Don't forget the extra ``s'' after the closing parenthesis! This is
 the cause of many confusing errors.
@@ -227,6 +233,22 @@ def determine_foo(props):
     return 'qux'
 
 WithProperties('%(foo)s', foo=determine_foo)
+@end example
+
+The @code{WithProperties} function also does @code{printf}-style string
+interpolation, using strings obtained by calling
+@code{build.getProperty(propname)}. Note that for every @code{%s} (or
+@code{%d}, etc), you must have exactly one additional argument to
+indicate which build property you want to insert.
+
+@example
+from buildbot.steps.shell import ShellCommand
+from buildbot.process.properties import WithProperties
+
+f.addStep(ShellCommand(
+          command=["tar", "czf",
+                   WithProperties("build-%s.tar.gz", "revision"),
+                   "source"]))
 @end example
 
 Note: like python, you can either do positional-argument interpolation
@@ -305,6 +327,11 @@ The repository of the sourcestamp for this build
 @item project
 
 The project of the sourcestamp for this build
+
+@item workdir
+
+The absolute path of the base working directory on the slave, of the current
+builder.
 
 @end table
 
@@ -427,9 +454,15 @@ The callable given as parameter will take the repository property from
 the Change and its return value will be used as repository URL.
 
 @end table
+
+@item timeout
+Specifies the timeout for slave-side operations, in seconds.  If your
+repositories are particularly large, then you may need to increase this 
+value from its default of 1200 (20 minutes).
+
 @end table
 
-Use of WithProperites with string, dict and callable is supported.
+Use of WithProperties with string, dict and callable is supported.
 
 Note that this is quite similar to the mechanism used by the WebStatus
 for the @code{changecommentlink}, @code{projects} or @code{repositories} parameter.
@@ -467,6 +500,7 @@ arguments are described on the following pages.
 * Git::
 * BitKeeper::
 * Repo::
+* Monotone::
 @end menu
 
 @node CVS
@@ -999,10 +1033,38 @@ which at the moment cannot be described properly in Gerrit, and can only be desc
 by humans.
 
 
+@node Monotone
+@subsubsection Monotone
+
+@cindex Monotone Checkout
+@bsindex buildbot.steps.source.Monotone
+
+
+The @code{Monotone} build step performs a
+@uref{http://www.monotone.ca, Monotone} (aka ``mtn'') checkout
+or update.
+
+The Monotone step takes the following arguments:
+
+@table @code
+@item repourl
+the URL at which the Monotone source repository is available.
+
+@item branch
+this specifies the name of the branch to use when a Build does not
+provide one of its own.
+
+@item progress
+this is a boolean that has a pull from the repository use
+``--ticker=dot'' instead of the default ``--ticker=none''.
+
+@end table
+
+
 @node ShellCommand
 @subsection ShellCommand
 
-Most interesting steps involve exectuing a process of some sort on the
+Most interesting steps involve executing a process of some sort on the
 buildslave.  The @code{ShellCommand} class handles this activity.
 
 Several subclasses of ShellCommand are provided as starting points for
@@ -1122,18 +1184,25 @@ a PTY do not have separate stdout/stderr streams: both are merged into
 stdout.
 
 @item usePTY
-Should this command be run in a @code{pty}?  The default is to observe the
+Should this command be run in a pseudo-terminal?  The default is to observe the
 configuration of the client (@pxref{Buildslave Options}), but specifying
-@code{True} or @code{False} here will override the default.
+@code{True} or @code{False} here will override the default.  This option is not
+available on Windows.
 
-The advantage of using a PTY is that ``grandchild'' processes are more likely
-to be cleaned up if the build is interrupted or times out (since it enables the
-use of a ``process group'' in which all child processes will be placed). The
-disadvantages: some forms of Unix have problems with PTYs, some of your unit
-tests may behave differently when run under a PTY (generally those which check
-to see if they are being run interactively), and PTYs will merge the stdout and
-stderr streams into a single output stream (which means the red-vs-black
-coloring in the logfiles will be lost).
+In general, you do not want to use a pseudo-terminal.  This is @i{only} useful
+for running commands that require a terminal - for example, testing a
+command-line application that will only accept passwords read from a terminal.
+Using a pseudo-terminal brings lots of compatibility problems, and prevents
+Buildbot from distinguishing the standard error (red) and standard output
+(black) streams.
+
+In previous versions, the advantage of using a pseudo-terminal was that
+``grandchild'' processes were more likely to be cleaned up if the build was
+interrupted or times out.  This occurred because using a pseudo-terminal
+incidentally puts the command into its own process group. 
+
+As of Buildbot-0.8.4, all commands are placed in process groups, and thus
+grandchild processes will be cleaned up properly.
 
 @item logfiles
 Sometimes commands will log interesting data to a local file, rather
@@ -1146,7 +1215,7 @@ their contents afterwards.
 
 The @code{logfiles=} argument allows you to collect data from these
 secondary logfiles in near-real-time, as the step is running. It
-accepts a dictionary which maps from a local Log name (which is how
+accepts a dictionary which maps from a local log name (which is how
 the log data is presented in the build results) to either a remote filename
 (interpreted relative to the build's working directory), or a dictionary
 of options. Each named file will be polled on a regular basis (every couple
@@ -1167,6 +1236,9 @@ f.addStep(ShellCommand(
               logfiles=@{"triallog": "_trial_temp/test.log"@}))
 @end example
 
+The above example will add a log named 'triallog' on the master, based on
+@code{_trial_temp/test.log} on the slave.
+
 @example
 f.addStep(ShellCommand(
               command=["make", "test"],
@@ -1183,10 +1255,12 @@ suppress the display of empty or missing log files. The default is @code{False}.
 
 @item timeout
 if the command fails to produce any output for this many seconds, it
-is assumed to be locked up and will be killed.
+is assumed to be locked up and will be killed. This defaults to 1200 seconds.
+Pass @code{None} to disable.
 
 @item maxTime
-if the command takes longer than this many seconds, it will be killed.
+if the command takes longer than this many seconds, it will be killed. This
+is disabled by default.
 
 @item description
 This will be used to describe the command (on the Waterfall display)
@@ -1243,7 +1317,9 @@ WARNINGS if any were discovered. Through the @code{WarningCountingShellCommand}
 superclass, the number of warnings is stored in a Build Property named
 ``warnings-count'', which is accumulated over all Compile steps (so if two
 warnings are found in one step, and three are found in another step, the
-overall build will have a ``warnings-count'' property of 5).
+overall build will have a ``warnings-count'' property of 5).  Each step can be
+optionally given a maximum number of warnings via the maxWarnCount parameter.
+If this limit is exceeded, the step will be marked as a failure.
 
 The default regular expression used to detect a warning is
 @code{'.*warning[: ].*'} , which is fairly liberal and may cause
@@ -1411,6 +1487,11 @@ libraries. Then comes the default path defined in the compiler options.
 @item arch
 That one is only available with the class VS2005 (VC8). It gives the
 target architecture of the built artifact. It defaults to @code{"x86''}.
+
+@item project
+This gives the specific project to build
+from within a workspace. It defaults to building all projects. This is useful
+for building cmake generate projects.
 @end table
 
 Here is an example on how to use this step:
@@ -1498,7 +1579,7 @@ myFactory.addStep(MTR(workdir="mysql-test", dbpool=myPool,
 
 @item textLimit
 Maximum number of test failures to show on the waterfall page (to not flood
-the page in case of a large number of test failures. Defaults to 5.
+the page in case of a large number of test failures). Defaults to 5.
 
 @item testNameLimit
 Maximum length of test names to show unabbreviated in the waterfall page, to
@@ -1553,17 +1634,20 @@ from buildbot.steps import shell
 f.addStep(shell.SetProperty(command="uname -a", property="uname"))
 @end example
 
-This runs @code{uname -a} and captures its stdout, stripped of leading
-and trailing whitespace, in the property "uname".  To avoid stripping,
-add @code{strip=False}.  The @code{property} argument can be specified
-as a @code{WithProperties} object.
+This runs @code{uname -a} and captures its output (including stderr), stripped
+of leading and trailing whitespace, in the property "uname".  To avoid
+stripping, add @code{strip=False}. 
 
-The more advanced usage allows you to specify a function to extract
-properties from the command output.  Here you can use regular
-expressions, string interpolation, or whatever you would like.
-The function is called with three arguments: the exit status of the
-command, its standard output as a string, and its standard error as
-a string.  It should return a dictionary containing all new properties.
+The @code{property} argument can be specified as a @code{WithProperties}
+object, allowing the property name to be built from other property values.
+
+The more advanced usage allows you to specify a function to extract properties
+from the command output.  Here you can use regular expressions, string
+interpolation, or whatever you would like.  In this form, @code{extract_fn}
+should be passed, and not @code{property}.  The @code{extract_fn} function is
+called with three arguments: the exit status of the command, its standard
+output as a string, and its standard error as a string.  It should return a
+dictionary containing all new properties.
 
 @example
 def glob2list(rc, stdout, stderr):
@@ -1596,11 +1680,33 @@ through a subunit filter to extract test and failure counts.
 
 @example
 from buildbot.steps.subunit import SubunitShellCommand
-f.addStep(SubunitShellCommand(command="make test"))
+f.addStep(SubunitShellCommand(command="make test", failureOnNoTests=False))
 @end example
 
 This runs @code{make test} and filters it through subunit. The 'tests' and
 'test failed' progress metrics will now accumulate test data from the test run.
+
+If @code{failureOnNoTests} is True, this step will fail if no test is run. By
+default @code{failureOnNoTests} is False.
+
+@node Slave Filesystem Steps
+@subsection Slave Filesystem Steps
+
+Here are some buildsteps for manipulating the slaves filesystem.
+
+@menu
+* RemoveDirectory::
+@end menu
+
+@node RemoveDirectory
+@subsubsection RemoveDirectory
+
+This command recursively deletes a directory on the slave.
+
+@example
+from buildbot.steps.slave import RemoveDirectory
+f.addStep(RemoveDirectory(dir="build/build"))
+@end example
 
 @node Python BuildSteps
 @subsection Python BuildSteps
@@ -1861,6 +1967,12 @@ umask tends to be fairly restrictive, but at least on the buildslave
 you can make it less restrictive with a --umask command-line option at
 creation time (@pxref{Buildslave Options}).
 
+The @code{keepstamp=} argument is a boolean that, when True, forces
+the modified and accessed time of the destination file to match the
+times of the source file.  When False, the modified and accessed times
+of the destination file are set to the current time on the buildmaster.
+The default is false.
+
 @subheading Transfering Directories
 
 To transfer complete directories from the buildslave to the master, there
@@ -1960,8 +2072,15 @@ master on connect.  These can be copied into Buildbot properties with the
 @code{variables} parameter, then simply use the values as properties in a later
 step.
 
+Note that on Windows, environment variables are case-insensitive, but Buildbot
+property names are case sensitive.  The property will have exactly the variable
+name you specify, even if the underlying environment variable is capitalized
+differently.  If, for example, you use @code{variables=['Tmp']}, the result
+will be a property named @code{Tmp}, even though the environment variable is
+displayed as @code{TMP} in the Windows GUI.
+
 @example
-from buildbot.steps.slave import SetProperiesFromEnv
+from buildbot.steps.slave import SetPropertiesFromEnv
 from buildbot.steps.shell import Compile
 
 f.addStep(SetPropertiesFromEnv(variables=["SOME_JAVA_LIB_HOME", "JAVAC"]))
@@ -2002,13 +2121,23 @@ all of the builds from the triggered schedulers have finished. If this
 argument is False (the default) or not given, then the buildstep
 succeeds immediately after triggering the schedulers.
 
+The SourceStamp to use for the triggered build is controlled by the arguments
+@code{updateSourceStamp}, @code{alwaysUseLatest}, and @code{sourceStamp}.
 If @code{updateSourceStamp} is True (the default), then step updates
 the SourceStamp given to the Triggerables to include
 @code{got_revision} (the revision actually used in this build) as
 @code{revision} (the revision to use in the triggered builds). This is
 useful to ensure that all of the builds use exactly the same
 SourceStamp, even if other Changes have occurred while the build was
-running.
+running. If @code{updateSourceStamp} is False (and neither of the other
+arguments are specified), then the exact same SourceStamp is used. If
+@code{alwaysUseLatest} is True, then no SourceStamp is given, corresponding to
+using the latest revision of the repository specified in the Source step. This
+is useful if the triggered builds use to a different source repository.
+@code{sourceStamp} accepts a dictionary containing the keys @code{branch},
+@code{revision}, @code{branch}, @code{repository}, @code{project}, and
+optionally @code{patch_level}, @code{patch_level} and @code{patch_subdir} and
+creates the corresponding SourceStamp.
 
 Two parameters allow control of the properties that are passed to the triggered
 scheduler.  To simply copy properties verbatim, list them in the
@@ -2024,7 +2153,6 @@ A number of steps do not fall into any particular category.
 
 @menu
 * HLint::
-* Proce
 @end menu
 
 @node HLint
@@ -2187,9 +2315,11 @@ that contained the same text. To do this, you would add code to your
 and creates a new LogFile with the results:
 
 @example
+    import StringIO
     def createSummary(self, log):
         warnings = []
-        for line in log.readlines():
+        sio = StringIO.StringIO(log.getText())
+        for line in sio.readlines():
             if "warning:" in line:
                 warnings.append()
         self.addCompleteLog('warnings', "".join(warnings))

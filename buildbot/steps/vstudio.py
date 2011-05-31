@@ -17,7 +17,7 @@
 
 from buildbot.steps.shell import ShellCommand
 from buildbot.process.buildstep import LogLineObserver
-from buildbot.status.builder import SUCCESS, WARNINGS, FAILURE
+from buildbot.status.results import SUCCESS, WARNINGS, FAILURE
 
 import re
 
@@ -38,8 +38,8 @@ class MSLogLineObserver(LogLineObserver):
 
     _re_delimitor = re.compile(r'^(\d+>)?-{5}.+-{5}$')
     _re_file = re.compile(r'^(\d+>)?[^ ]+\.(cpp|c)$')
-    _re_warning = re.compile(r' : warning [A-Z]+[0-9]+:')
-    _re_error = re.compile(r' error [A-Z]+[0-9]+\s?: ')
+    _re_warning = re.compile(r' ?: warning [A-Z]+[0-9]+:')
+    _re_error = re.compile(r' ?error ([A-Z]+[0-9]+)?\s?: ')
 
     nbFiles = 0
     nbProjects = 0
@@ -91,6 +91,7 @@ class VisualStudio(ShellCommand):
     projectfile = None
     config = None
     useenv = False
+    project = None
     PATH = []
     INCLUDE = []
     LIB = []
@@ -101,6 +102,7 @@ class VisualStudio(ShellCommand):
                 projectfile = None,
                 config = None,
                 useenv = False,
+                project = None,
                 INCLUDE = [],
                 LIB = [],
                 PATH = [],
@@ -110,6 +112,7 @@ class VisualStudio(ShellCommand):
         self.projectfile = projectfile
         self.config = config
         self.useenv = useenv
+        self.project = project
         if len(INCLUDE) > 0:
             self.INCLUDE = INCLUDE
             self.useenv = True
@@ -126,6 +129,7 @@ class VisualStudio(ShellCommand):
             projectfile = projectfile,
             config = config,
             useenv = useenv,
+            project = project,
             INCLUDE = INCLUDE,
             LIB = LIB,
             PATH = PATH
@@ -182,6 +186,8 @@ class VisualStudio(ShellCommand):
         self.step_status.setStatistic('errors', self.logobserver.nbErrors)
 
     def evaluateCommand(self, cmd):
+        if cmd.rc != 0:
+            return FAILURE
         if self.logobserver.nbErrors > 0:
             return FAILURE
         if self.logobserver.nbWarnings > 0:
@@ -227,7 +233,10 @@ class VC6(VisualStudio):
         command = ["msdev"]
         command.append(self.projectfile)
         command.append("/MAKE")
-        command.append("ALL - " + self.config)
+        if self.project is not None:
+            command.append(self.project + " - " + self.config)
+        else:
+            command.append("ALL - " + self.config)
         if self.mode == "rebuild":
             command.append("/REBUILD")
         else:
@@ -277,6 +286,9 @@ class VC7(VisualStudio):
         command.append(self.config)
         if self.useenv:
             command.append("/UseEnv")
+        if self.project is not None:
+            command.append("/Project")
+            command.append(self.project)
         self.setCommand(command)
         return VisualStudio.start(self)
 
@@ -339,6 +351,9 @@ class VCExpress9(VC8):
         command.append(self.config)
         if self.useenv:
             command.append("/UseEnv")
+        if self.project is not None:
+            command.append("/Project")
+            command.append(self.project)
         self.setCommand(command)
         return VisualStudio.start(self)
 

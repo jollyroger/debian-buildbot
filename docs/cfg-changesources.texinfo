@@ -47,11 +47,9 @@ are available on github - @pxref{Contrib Scripts}.
 
 @itemize @bullet
 @item mail.CVSMaildirSource (watching mail sent by @code{contrib/buildbot_cvs_mail.py} script)
-@item pb.PBChangeSource (listening for connections from @code{buildbot
-sendchange} run in a loginfo script)
+@item pb.PBChangeSource (@pxref{PBChangeSource}) (listening for connections from @code{buildbot sendchange} run in a loginfo script)
 @item pb.PBChangeSource (listening for connections from a long-running
-@code{contrib/viewcvspoll.py} polling process which examines the ViewCVS
-database directly
+@code{contrib/viewcvspoll.py} polling process which examines the ViewCVS database directly
 @item change_hook in WebStatus (
 @code{status.web.change_hook})
 @end itemize
@@ -81,8 +79,6 @@ process
 @item Mercurial
 @itemize @bullet
 @item pb.PBChangeSource (listening for connections from
-@code{contrib/hg_buildbot.py} run in an 'incoming' hook)
-@item pb.PBChangeSource (listening for connections from
 @code{buildbot/changes/hgbuildbot.py} run as an in-process 'changegroup'
 hook)
 @item change_hook in WebStatus (
@@ -101,16 +97,22 @@ hook)
 
 @item Git
 @itemize @bullet
-@item pb.PBChangeSource (listening for connections from
-@code{contrib/git_buildbot.py} run in the post-receive hook)
-@item change_hook in WebStatus (
-@code{status.web.change_hook})
+@item pb.PBChangeSource (listening for connections from @code{contrib/git_buildbot.py} run in the post-receive hook)
+@item pb.PBChangeSource (listening for connections from @code{contrib/github_buildbot.py}, which listens for notifications from github)
+@item change_hook in WebStatus (@pxref{Change Hooks})
+@item github change hook (specifically designed for github notifications, but requiring a publicly-accessible WebStatus)
 @item @code{gitpoller.GitPoller} (polling a remote git repository)
 @end itemize
 
 @item Repo/Git
 @itemize @bullet
 @item @code{gerritchangesource.GerritChangeSource} connects to Gerrit via SSH to get a live stream of changes
+@end itemize
+
+@item Monotone
+@itemize @bullet
+@item pb.PBChangeSource (listening for connections from
+@code{monotone-buildbot.lua}, which is available with monotone)
 @end itemize
 
 @end table
@@ -424,7 +426,7 @@ Where options are:
 
     --category=category
     -C
-        Catagory for change. This becomes the Change.cagatory attribute.
+        Category for change. This becomes the Change.category attribute.
         This may not make sense to specify it here, as category is meant
         to distinguish the diffrent types of bots inside a same project,
         such as "test", "docs", "full"
@@ -543,19 +545,13 @@ c['change_source'] = BzrLaunchpadEmailMaildirSource("~/maildir-buildbot", branch
 
 @csindex buildbot.changes.pb.PBChangeSource
 
-The last kind of ChangeSource actually listens on a TCP port for
-clients to connect and push change notices @emph{into} the
-Buildmaster. This is used by the built-in @code{buildbot sendchange}
-notification tool, as well as the VC-specific
-@file{contrib/svn_buildbot.py}, @file{contrib/arch_buildbot.py},
-@file{contrib/hg_buildbot.py} tools, and the
-@code{buildbot.changes.hgbuildbot} hook. These tools are run by the
-repository (in a commit hook script), and connect to the buildmaster
-directly each time a file is comitted. This is also useful for
-creating new kinds of change sources that work on a @code{push} model
-instead of some kind of subscription scheme, for example a script
-which is run out of an email .forward file.
-
+@code{PBChangeSource} actually listens on a TCP port for clients to connect and
+push change notices @emph{into} the Buildmaster. This is used by the built-in
+@code{buildbot sendchange} notification tool, as well as several
+version-control hook scripts.  This change source is also useful for creating
+new kinds of change sources that work on a @code{push} model instead of some
+kind of subscription scheme, for example a script which is run out of an email
+@file{.forward} file.
 This ChangeSource always runs on the same TCP port as the slaves.  It
 shares the same protocol, and in fact shares the same space of "usernames", so you cannot configure a @code{PBChangeSource} with the same name as a slave.
 
@@ -565,9 +561,6 @@ for the change source}.  If your sendchange credentials are known (e.g., the
 defaults), then your buildmaster is susceptible to injection of arbitrary
 changes, which (depending on the build factories) could lead to arbitrary code
 execution on buildslaves.
-
-Buildbot does not currently allow @code{PBChangeSource} to run on a different
-port than the slave port.  That will be fixed in bug #1708.
 
 The @code{PBChangeSource} is created with the following arguments.
 
@@ -650,6 +643,25 @@ pushed to this repository in a single @command{hg push} command),
 whereas the @code{incoming} hook is run with just one revision at a
 time. The @code{hgbuildbot.hook} function will only work with the
 @code{changegroup} hook.
+
+If the buildmaster @code{PBChangeSource} is configured to require
+sendchange credentials then you can set these with the @code{auth}
+parameter. When this parameter is not set it defaults to
+@code{change:changepw}, which are the defaults for the @code{user} and
+@code{password} values of a @code{PBChangeSource} which doesn't require
+authentication.
+
+@example
+[hgbuildbot]
+master = buildmaster.example.org:9987
+auth = clientname:supersecret
+@end example
+
+You can set this parameter in either the global @file{/etc/mercurial/hgrc},
+your personal @file{~/.hgrc} file or the repository local @file{.hg/hgrc}
+file. But since this value is stored in plain text, you must make sure that
+it can only be read by those users that need to know the authentication
+credentials.
 
 The @code{[hgbuildbot]} section has two other parameters that you
 might specify, both of which control the name of the branch that is
@@ -762,6 +774,11 @@ append the branch name to the baseURL.
 
 @end table
 
+Note: The bzr smart server (as of version 2.2.2) doesn't know how to resolve
+@code{bzr://} urls into absolute paths so any paths in @code{locations.conf}
+won't match, hence no change notifications will be sent to Buildbot. Setting
+configuration parameters globally or in-branch might still work.
+
 When buildbot no longer has a hardcoded password, it will be a configuration
 option here as well.
 
@@ -806,7 +823,7 @@ A function that maps a pathname, without the leading @code{p4base}, to a
 which effectively disables branch support. You should supply a function
 which understands your repository structure.
 
-@item @code{pollinterval}
+@item @code{pollInterval}
 How often to poll, in seconds. Defaults to 600 (10 minutes).
 
 @item @code{histmax}
@@ -927,7 +944,7 @@ authenticate to the svn server before you can do @code{svn info} or
 Like @code{svnuser}, this will cause a @code{--password} argument to
 be passed to all svn commands.
 
-@item pollinterval
+@item pollInterval
 How often to poll, in seconds. Defaults to 600 (checking once every 10
 minutes). Lower this if you want the buildbot to notice changes
 faster, raise it if you want to reduce the network and CPU load on
@@ -1202,8 +1219,10 @@ processes any changes. It requires its own working directory for operation, whic
 can be specified via the @code{workdir} property. By default a temporary directory will
 be used.
 
-The @code{GitPoller} has only been tested with @code{git} version 
-@code{1.7.0.3} - your mileage may vary.
+The @code{GitPoller} only works with git @code{1.7} and up, out of the
+box.  If you're using earlier versions of git, you can get things to
+work by manually creating an empty repository in
+@code{<tempdir>/gitpoller_work}.
 
 @code{GitPoller} accepts the following arguments:
 
@@ -1216,14 +1235,24 @@ the git-url that describes the remote repository, e.g. @code{git@@example.com:fo
 the desired branch to fetch, will default to @code{'master'}
 
 @item workdir
-the directory where the poller should keep its local repository. will default to @code{<tempdir>/gitpoller_work}
+the directory where the poller should keep its local repository. will default
+to @code{<tempdir>/gitpoller_work}, which is probably not what you want.  If
+this is a relative path, it will be interpreted relative to the master's
+basedir.
                 
 @item pollInterval
-interval in seconds between polls, default is 10 minutes.  For compatibility,
-this can also be spelled @code{pollinterval}
+interval in seconds between polls, default is 10 minutes.
 
 @item gitbin
 path to the git binary, defaults to just @code{'git'}
+
+@item fetch_refspec
+One or more refspecs to use when fetching updates for the repository. By default,
+the @code{GitPoller} will simply fetch all refs. If your repository is large
+enough that this would be unwise (or active enough on irrelevant branches that
+it'd be a waste of time to fetch them all), you may wish to specify only a certain
+refs to be updated. (A single refspec may be passed as a string, or multiple refspecs
+may be passed as a list or set of strings.)
 
 @item category
 Set the category to be used for the changes produced by the @code{GitPoller}.
@@ -1237,6 +1266,12 @@ and can be used in a Change Filter for triggering particular builders.
 
 @item usetimestamps
 parse each revision's commit timestamp (default is @code{True}), or ignore it in favor of the current time (so recently processed commits appear together in the waterfall page)
+
+@item encoding
+Set encoding will be used to parse author's name and commit message. Default
+encoding is @code{'utf-8'}. This will not be applied to file names since git
+will translate non-ascii file names to unreadable escape sequences.
+
 @end table
 
 @heading Example

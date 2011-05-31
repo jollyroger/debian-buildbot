@@ -41,68 +41,20 @@ class ParameterError(Exception):
     pass
 
 class IChangeSource(Interface):
-    """Object which feeds Change objects to the changemaster. When files or
-    directories are changed and the version control system provides some
-    kind of notification, this object should turn it into a Change object
-    and pass it through::
-
-      self.changemaster.addChange(change)
     """
+    Service which feeds Change objects to the changemaster. When files or
+    directories are changed in version control, this object should represent
+    the changes as a change dictionary and call::
+
+      self.master.addChange(who=.., rev=.., ..)
+
+    See 'Writing Change Sources' in the manual for more information.
+    """
+    master = Attribute('master',
+            'Pointer to BuildMaster, automatically set when started.')
 
     def describe():
-        """Should return a string which briefly describes this source. This
-        string will be displayed in an HTML status page."""
-
-class IScheduler(Interface):
-    """I watch for Changes in the source tree and decide when to trigger
-    Builds. I create BuildSet objects and submit them to the BuildMaster. I
-    am a service, and the BuildMaster is always my parent.
-
-    @ivar properties: properties to be applied to all builds started by this
-    scheduler
-    @type properties: L<buildbot.process.properties.Properties>
-    """
-
-    def addChange(change):
-        """A Change has just been dispatched by one of the ChangeSources.
-        Each Scheduler will receive this Change. I may decide to start a
-        build as a result, or I might choose to ignore it."""
-
-    def listBuilderNames():
-        """Return a list of strings indicating the Builders that this
-        Scheduler might feed."""
-
-    def getPendingBuildTimes():
-        """Return a list of timestamps for any builds that are waiting in the
-        tree-stable-timer queue. This is only relevant for Change-based
-        schedulers, all others can just return an empty list."""
-        # TODO: it might be nice to make this into getPendingBuildSets, which
-        # would let someone subscribe to the buildset being finished.
-        # However, the Scheduler doesn't actually create the buildset until
-        # it gets submitted, so doing this would require some major rework.
-
-class IUpstreamScheduler(Interface):
-    """This marks an IScheduler as being eligible for use as the 'upstream='
-    argument to a buildbot.scheduler.Dependent instance."""
-
-    def subscribeToSuccessfulBuilds(target):
-        """Request that the target callbable be invoked after every
-        successful buildset. The target will be called with a single
-        argument: the SourceStamp used by the successful builds."""
-
-    def listBuilderNames():
-        """Return a list of strings indicating the Builders that this
-        Scheduler might feed."""
-
-class IDownstreamScheduler(Interface):
-    """This marks an IScheduler to be listening to other schedulers.
-    On reconfigs, these might get notified to check if their upstream
-    scheduler are stil the same."""
-
-    def checkUpstreamScheduler():
-        """Check if the upstream scheduler is still alive, and if not,
-        get a new upstream object from the master."""
-
+        """Return a string which briefly describes this source."""
 
 class ISourceStamp(Interface):
     """
@@ -162,10 +114,10 @@ class IStatus(Interface):
     """I am an object, obtainable from the buildmaster, which can provide
     status information."""
 
-    def getProjectName():
+    def getTitle():
         """Return the name of the project that this Buildbot is working
         for."""
-    def getProjectURL():
+    def getTitleURL():
         """Return the URL of this Buildbot's project."""
     def getBuildbotURL():
         """Return the URL of the top-most Buildbot status page, or None if
@@ -199,7 +151,11 @@ class IStatus(Interface):
         """Return the ISlaveStatus object for a given named buildslave."""
 
     def getBuildSets():
-        """Return a list of active (non-finished) IBuildSetStatus objects."""
+        """
+        Return a list of un-completed build sets.
+
+        @returns: list of L{IBuildSetStatus} implementations, via Deferred.
+        """
 
     def generateFinishedBuilds(builders=[], branches=[],
                                num_builds=None, finished_before=None,
@@ -254,13 +210,6 @@ class IBuildSetStatus(Interface):
     """I represent a set of Builds, each run on a separate Builder but all
     using the same source tree."""
 
-    def getSourceStamp():
-        """Return a SourceStamp object which can be used to re-create
-        the source tree that this build used.
-
-        This method will return None if the source information is no longer
-        available."""
-        pass
     def getReason():
         pass
     def getID():
@@ -273,12 +222,9 @@ class IBuildSetStatus(Interface):
         pass # not implemented
     def getBuilderNames():
         """Return a list of the names of all Builders on which this set will
-        do builds."""
-    def getBuildRequests():
-        """Return a list of IBuildRequestStatus objects that represent my
-        component Builds. This list might correspond to the Builders named by
-        getBuilderNames(), but if builder categories are used, or 'Builder
-        Aliases' are implemented, then they may not."""
+        do builds.
+        
+        @returns: list of names via Deferred"""
     def isFinished():
         pass
     def waitUntilSuccess():
@@ -299,18 +245,19 @@ class IBuildRequestStatus(Interface):
     finally turned into a Build."""
 
     def getSourceStamp():
-        """Return a SourceStamp object which can be used to re-create
-        the source tree that this build used.  This method will
-        return an absolute SourceStamp if possible, and its results
-        may change as the build progresses.  Specifically, a "HEAD"
-        build may later be more accurately specified by an absolute
-        SourceStamp with the specific revision information.
+        """
+        Get a SourceStamp object which can be used to re-create the source tree
+        that this build used.  This method will return an absolute SourceStamp
+        if possible, and its results may change as the build progresses.
+        Specifically, a "HEAD" build may later be more accurately specified by
+        an absolute SourceStamp with the specific revision information.
 
         This method will return None if the source information is no longer
-        available."""
-        pass
-    def getBuilderName():
-        pass
+        available.
+
+        @returns: SourceStamp via Deferred
+        """
+
     def getBuilds():
         """Return a list of IBuildStatus objects for each Build that has been
         started in an attempt to satify this BuildRequest."""
@@ -326,9 +273,8 @@ class IBuildRequestStatus(Interface):
     def unsubscribe(observer):
         """Unregister the callable that was registered with subscribe()."""
     def getSubmitTime():
-        """Return the time when this request was submitted"""
-    def setSubmitTime(t):
-        """Sets the time when this request was submitted"""
+        """Return the time when this request was submitted.  Returns a
+        Deferred."""
 
 
 class ISlaveStatus(Interface):
@@ -377,10 +323,13 @@ class IBuilderStatus(Interface):
         """Return a list of ISlaveStatus objects for the buildslaves that are
         used by this builder."""
 
-    def getPendingBuilds():
-        """Return an IBuildRequestStatus object for all upcoming builds
-        (those which are ready to go but which are waiting for a buildslave
-        to be available."""
+    def getPendingBuildRequestStatuses():
+        """
+        Get a L{IBuildRequestStatus} implementations for all unclaimed build
+        requests.
+
+        @returns: list of objects via Deferred
+        """
 
     def getCurrentBuilds():
         """Return a list containing an IBuildStatus object for each build
@@ -1024,7 +973,7 @@ class IStatusReceiver(Interface):
         in L{IBuildStatus.getResults}.
 
         @type  builderName: string
-        @type  build:       L{buildbot.status.builder.BuildStatus}
+        @type  build:       L{buildbot.status.build.BuildStatus}
         @type  results:     tuple
         """
 
@@ -1039,43 +988,31 @@ class IStatusReceiver(Interface):
 
 class IControl(Interface):
     def addChange(change):
-        """Add a change to all builders. Each Builder will decide for
-        themselves whether the change is interesting or not, and may initiate
-        a build as a result."""
-
-    def submitBuildSet(builderNames, ss, reason, props=None, now=False):
-        """Create a BuildSet, which will eventually cause a build of the
-        given SourceStamp to be run on all of the named builders. This
-        returns a BuildSetStatus object, which can be used to keep track of
-        the builds that are performed.
-
-        If now=True, and the builder has no slave attached, NoSlaveError will
-        be raised instead of queueing the request for later action."""
+        """Add a change to the change queue, for analysis by schedulers."""
 
     def getBuilder(name):
         """Retrieve the IBuilderControl object for the given Builder."""
 
 class IBuilderControl(Interface):
-    def submitBuildRequest(ss, reason, props=None, now=False):
+    def submitBuildRequest(ss, reason, props=None):
         """Create a BuildRequest, which will eventually cause a build of the
         given SourceStamp to be run on this builder. This returns a
-        BuildRequestStatus object, which can be used to keep track of the
-        builds that are performed.
+        BuildRequestStatus object via a Deferred, which can be used to keep
+        track of the builds that are performed."""
 
-        If now=True, and I have no slave attached, NoSlaveError will be
-        raised instead of queueing the request for later action."""
-
-    def resubmitBuild(buildStatus, reason="<rebuild, no reason given>"):
+    def rebuildBuild(buildStatus, reason="<rebuild, no reason given>"):
         """Rebuild something we've already built before. This submits a
         BuildRequest to our Builder using the same SourceStamp as the earlier
         build. This has no effect (but may eventually raise an exception) if
         this Build has not yet finished."""
 
-    def getPendingBuilds():
-        """Return a list of L{IBuildRequestControl} objects for this Builder.
-        Each one corresponds to a pending build that has not yet started (due
-        to a scarcity of build slaves). These upcoming builds can be canceled
-        through the control object."""
+    def getPendingBuildRequestControls():
+        """
+        Get a list of L{IBuildRequestControl} objects for this Builder.
+        Each one corresponds to an unclaimed build request.
+
+        @returns: list of objects via Deferred
+        """
 
     def getBuild(number):
         """Attempt to return an IBuildControl object for the given build.
@@ -1167,13 +1104,23 @@ class ILatentBuildSlave(IBuildSlave):
     def buildStarted(sb):
         """Inform the latent build slave that a build has started.
 
-        ``sb`` is a LatentSlaveBuilder as defined in buildslave.py.  The sb
-        is the one for whom the build started.
+        @param sb: a L{LatentSlaveBuilder}.  The sb is the one for whom the
+        build finished.
         """
 
     def buildFinished(sb):
         """Inform the latent build slave that a build has finished.
 
-        ``sb`` is a LatentSlaveBuilder as defined in buildslave.py.  The sb
-        is the one for whom the build finished.
+        @param sb: a L{LatentSlaveBuilder}.  The sb is the one for whom the
+        build finished.
+        """
+
+class IRenderable(Interface):
+    """An object that can be interpolated with properties from a build.
+    """
+
+    def render(properties):
+        """Return the interpolation with the given properties
+
+        @param pmap: a L{Properties} instance containing the properties to interpolate.
         """

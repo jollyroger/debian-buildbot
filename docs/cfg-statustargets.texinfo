@@ -19,7 +19,9 @@ c['status'].append(m)
 
 from buildbot.status import words
 c['status'].append(words.IRC(host="irc.example.com", nick="bb",
-                             channels=["#example"]))
+                             channels=[@{"channel": "#example1"@},
+                                       @{"channel": "#example2",
+                                        "password": "somesecretpassword"@}]))
 @end example
 
 Most status delivery objects take a @code{categories=} argument, which
@@ -266,8 +268,10 @@ given categories.
 By adding one or more ``name='' query arguments to the URL, the console view is
 restricted to only showing changes made by the given users.
 
-NOTE: To use this page, your buildbot.css file in public_html
-must be the one found in buildbot/status/web/extended.css.
+NOTE: To use this page, your buildbot.css file in public_html must be the one
+found in @file{master/buildbot/status/web/files/default.css}.  This is the
+default for new installs, but upgrades of very old installs of Buildbot may
+need to manually fix the CSS file.
 
 The console view is still in development. At this moment by default the view
 sorts revisions lexically, which can lead to odd behavior with non-integer
@@ -543,8 +547,8 @@ authz = Authz(auth=BasicAuth(users),
 
 The @code{forceBuild} and @code{pingBuilder} actions both supply a
 BuilderStatus object.  The @code{stopBuild} action supplies a BuildStatus
-object.  The @code{cancelPendingBuild} action supplies a BuildRequest.  The
-remainder do not supply any extra arguments.
+object.  The @code{cancelPendingBuild} action supplies a @code{BuildRequest}.
+The remainder do not supply any extra arguments.
 
 @heading Logging configuration
 
@@ -571,7 +575,7 @@ in change comments.
 @subheading revlink
 
 The @code{revlink} is used to create links from revision IDs in the web status
-to a web-view of your source control system. The parametr's value must be a
+to a web-view of your source control system. The parameter's value must be a
 format string, a dict mapping a string (repository name) to format strings, or a callable.
 
 The format string should use '%s' to insert the revision id in the url.  For
@@ -580,7 +584,9 @@ example, for Buildbot on github:
 will be URL encoded before inserted in the replacement string)
 
 The callable takes the revision id and repository argument, and should return
-an URL to the revision. 
+an URL to the revision.  Note that the revision id may not always be in the
+form you expect, so code defensively.  In particular, a revision of "??" may be
+supplied when no other information is available.
 
 Note that SourceStamps that are not created from version-control changes (e.g.,
 those created by a Nightly or Periodic scheduler) will have an empty repository
@@ -645,7 +651,7 @@ An example WebStatus configuration line which enables change_hook and two DIALEC
 c['status'].append(html.WebStatus(http_port=8010,allowForce=True,
                         change_hook_dialects=@{
                                 'base': True,
-                                'github': @{'option1':True,
+                                'somehook': @{'option1':True,
                                             'option2':False@}@}))
 @end example
 
@@ -653,9 +659,30 @@ Within the WebStatus arguments, the @code{change_hook} key enables/disables the 
 and @code{change_hook_dialects} whitelists DIALECTs where the keys are the module names
 and the values are optional arguments which will be passed to the hooks.
 
-The post_build_request.py script in master/contrib allows for the submission of an
-arbitrary change request. Run 'post_build_request.py --help' for more information.
-The 'base' dialect must be enabled for this to work.
+The @file{post_build_request.py} script in @file{master/contrib} allows for the
+submission of an arbitrary change request. Run @code{post_build_request.py
+--help} for more information.  The 'base' dialect must be enabled for this to
+work.
+
+@heading github hook
+
+The github hook is simple and takes no options.  
+
+@example
+c['status'].append(html.WebStatus(..
+                    change_hook_dialects=@{ 'github' : True @}))
+@end example
+
+With this set up, add a Post-Receive URL for the project in the Github
+administrative interface, pointing to @code{/change_hook/github} relative to
+the root of the web status.  For example, if the grid URL is
+@code{http://builds.mycompany.com/bbot/grid}, then point Github to
+@code{http://builds.mycompany.com/bbot/change_hook/github}. To specify a project
+assoicated to the repository, append @code{?project=name} to the URL.
+
+Note that there is a standalone HTTP server available for receiving github
+notifications, as well: @code{contrib/github_buildbot.py}.  This script may be
+useful in cases where you cannot expose the WebStatus for public consumption.
 
 @node MailNotifier
 @subsection MailNotifier
@@ -733,6 +760,10 @@ mn = MailNotifier(fromaddr="myuser@@gmail.com",
                   useTls=True, relayhost="smtp.gmail.com", smtpPort=587,
                   smtpUser="myuser@@gmail.com", smtpPassword="mypassword")
 @end example
+
+Note that if you see @code{twisted.mail.smtp.TLSRequiredError} exceptions in
+the log while using TLS, this can be due @i{either} to the server not
+supporting TLS or to a missing pyopenssl package on the buildmaster system.
 
 In some cases it is desirable to have different information then what is
 provided in a standard MailNotifier message. For this purpose MailNotifier
@@ -836,7 +867,7 @@ def html_message_formatter(mode, name, build, results, master_status):
         text.append(u'<br>')
         text.append(u'<h4>Last %d lines of "%s"</h4>' % (limit_lines, name))
         unilist = list()
-        for line in content[len(content)-limit_lines:]:
+        for line in content[-limit_lines:]:
             unilist.append(cgi.escape(unicode(line,'utf-8')))
         text.append(u'<pre>'.join([uniline for uniline in unilist]))
         text.append(u'</pre>')
@@ -916,6 +947,9 @@ log names, to send a subset of the logs. Defaults to False.
 Patches are usually used on a Try server.
 Defaults to True.
 
+@item buildSetSummary
+(boolean). If True, send a single summary email consisting of the concatenation of all build completion messages rather than a completion message for each build.  Defaults to False.
+
 @item relayhost
 (string). The host to which the outbound SMTP connection should be
 made. Defaults to 'localhost'
@@ -963,7 +997,8 @@ text of the message. The @code{type} key is the message type ('plain' or
 
 @item extraHeaders
 (dictionary) A dictionary containing key/value pairs of extra headers to add
-to sent e-mails. Both the keys and the values may be a WithProperties instance.
+to sent e-mails. If buildSetStatus is False, both the keys and the values may be
+a WithProperties instance.
 
 @end table
 
@@ -975,7 +1010,7 @@ status objects:
 @item Name of the builder that generated this event
 @code{name}
 @item Name of the project
-@code{master_status.getProjectName()}
+@code{master_status.getTitle()}
 @item MailNotifier mode
 @code{mode} (one of @code{all, failing, problem, change, passing})
 @item Builder result as a string
@@ -1054,8 +1089,10 @@ told to shut up.
 @example
 from buildbot.status import words
 irc = words.IRC("irc.example.org", "botnickname",
-                channels=["channel1", "channel2"],
-                password="mysecretpassword",
+                channels=[@{"channel": "#example1"@},
+                          @{"channel": "#example2",
+                           "password": "somesecretpassword"@}],
+                password="mysecretnickservpassword",
                 notify_events=@{
                   'exception': 1,
                   'successToFailure': 1,
@@ -1073,6 +1110,11 @@ private messages until they have logged in with a password.
 To use the service, you address messages at the buildbot, either
 normally (@code{botnickname: status}) or with private messages
 (@code{/msg botnickname status}). The buildbot will respond in kind.
+
+If you issue a command that is currently not available, the buildbot
+will respond with an error message. If the @code{noticeOnChannel=True}
+option was used, error messages will be sent as channel notices instead
+of messaging. The default value is @code{noticeOnChannel=False}.
 
 Some of the commands currently available:
 
@@ -1129,10 +1171,12 @@ If the @code{allowForce=True} option was used, some addtional commands
 will be available:
 
 @table @code
-@item force build BUILDER REASON
+@item force build [--branch=BRANCH] [--revision=REVISION] BUILDER REASON
 Tell the given Builder to start a build of the latest code. The user
 requesting the build and REASON are recorded in the Build status. The
-buildbot will announce the build's status when it finishes.
+buildbot will announce the build's status when it finishes. The user 
+can specify a branch and/or revision with the optional parameters
+@code{--branch=BRANCH} and @code{--revision=REVISION}.
 
 @item stop build BUILDER REASON
 Terminate any running build in the given Builder. REASON will be added
@@ -1141,6 +1185,10 @@ if you committed a bug, corrected it right away, and don't want to
 wait for the first build (which is destined to fail) to complete
 before starting the second (hopefully fixed) build.
 @end table
+
+If the @code{categories} is set to a category of builders (see categories
+option in @ref{Builder Configuration}) changes related to only that 
+category of builders will be sent to the channel.
 
 @node PBListener
 @subsection PBListener
