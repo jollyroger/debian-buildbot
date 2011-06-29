@@ -1,2 +1,4 @@
 version=3
-http://code.google.com/p/buildbot/downloads/list .*/buildbot-([0-9.p]*)\.tar\.gz
+opts=downloadurlmangle=s/.*\/\//http:\/\// \
+    http://code.google.com/p/buildbot/downloads/list \
+    .*\/buildbot-([0-9.p]*)\.tar\.gz
