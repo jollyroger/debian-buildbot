@@ -11,6 +11,7 @@ The keys in this section affect the operations of the buildmaster globally.
 * Setting the PB Port for Slaves::
 * Defining Global Properties::
 * Debug Options::
+* Metrics Options::
 @end menu
 
 @node Database Specification
@@ -235,10 +236,11 @@ c['changeHorizon'] = 200
 c['buildHorizon'] = 100
 c['eventHorizon'] = 50
 c['logHorizon'] = 40
+c['caches'] = @{ 'changes' : 100 @}
 c['buildCacheSize'] = 15
-c['changeCacheSize'] = 10000
 @end example
 
+@bcindex c['caches']
 @bcindex c['logHorizon']
 @bcindex c['buildCacheSize']
 @bcindex c['changeHorizon']
@@ -246,10 +248,12 @@ c['changeCacheSize'] = 10000
 @bcindex c['eventHorizon']
 @bcindex c['changeCacheSize']
 
-Buildbot stores historical information on disk in the form of "Pickle" files
-and compressed logfiles.  In a large installation, these can quickly consume
-disk space, yet in many cases developers never consult this historical
-information.  
+@heading Horizons
+
+Buildbot stores historical information about builds on disk in the form of
+"Pickle" files and compressed logfiles.  In a large installation, these can
+quickly consume disk space, yet in many cases developers never consult this
+historical information.
 
 The @code{c['changeHorizon']} key determines how many changes the master will
 keep a record of. One place these changes are displayed is on the waterfall
@@ -265,17 +269,63 @@ than @code{logHorizon} but not older than @code{buildHorizon} will maintain
 their overall status and the status of each step, but the logfiles will be
 deleted.
 
-The @code{buildCacheSize} gives the number of builds for each builder
-which are cached in memory.  This number should be larger than the number of
-builds required for commonly-used status displays (the waterfall or grid
-views), so that those displays do not miss the cache on a refresh.
+@heading Caches
 
-Finally, the @code{changeCacheSize} gives the number of changes to cache in
-memory.  This should be larger than the number of changes that typically arrive
-in the span of a few minutes, otherwise your schedulers will be reloading
-changes from the database every time they run.  For distributed version control
-systems, like git or hg, several thousand changes may arrive at once, so
-setting @code{changeCacheSize} to something like 10,000 isn't unreasonable.
+The @code{caches} configuration key contains the configuration for Buildbot's
+in-memory caches.  These caches keep frequently-used objects in memory to avoid
+unnecessary trips to the database or to pickle files.  Caches are divided by
+object type, and each has a configurable maximum size.  The default size for
+each cache is 1, which allows Buildbot to make a number of optimizations
+without consuming much memory.  Larger, busier installations will likely want
+to increase these values.
+
+The available caches are:
+
+@enumerate
+@item Changes
+
+the number of change objects to cache in memory.  This should be larger than
+the number of changes that typically arrive in the span of a few minutes,
+otherwise your schedulers will be reloading changes from the database every
+time they run.  For distributed version control systems, like git or hg,
+several thousand changes may arrive at once, so setting this parameter to
+something like 10000 isn't unreasonable.
+
+This parameter is the same as the deprecated global parameter
+@code{changeCacheSize}.
+
+@item chdicts
+
+The number of rows from the @code{changes} table to cache in memory.  This
+value should be similar to the value for @code{Changes}.
+
+@item BuildRequests
+
+the number of BuildRequest objects kept in memory.  This number should be
+higher than the typical number of outstanding build requests.  If the master
+ordinarily finds jobs for BuildRequests immediately, it can be set to a
+relatively low value.
+
+@item SourceStamps
+
+the number of SourceStamp objects kept in memory.  This number should generally
+be similar to the number BuildRequesets.
+
+@item ssdicts
+
+The number of rows from the @code{sourcestamps} table to cache in memory.  This
+value should be similar to the value for @code{SourceStamps}.
+
+@end enumerate
+
+The @emph{global} @code{buildCacheSize} parameter gives the number of builds
+for each builder which are cached in memory.  This number should be larger than
+the number of builds required for commonly-used status displays (the waterfall
+or grid views), so that those displays do not miss the cache on a refresh.
+
+@example
+c['buildCacheSize'] = 15
+@end example
 
 @node Merging Build Requests (global option)
 @subsection Merging Build Requests (global option)
@@ -403,18 +453,21 @@ one uses unencrypted telnet. Two of them use a username+password
 combination to grant access, one of them uses an SSH-style
 @file{authorized_keys} file which contains a list of ssh public keys.
 
+Note that using any Manhole requires that @code{pycrypto} and @code{pyasn1} be
+installed.  These are not part of the normal Buildbot dependencies.
+
 @table @code
-@item manhole.AuthorizedKeysManhole
+@item buildbot.manhole.AuthorizedKeysManhole
 You construct this with the name of a file that contains one SSH
 public key per line, just like @file{~/.ssh/authorized_keys}. If you
 provide a non-absolute filename, it will be interpreted relative to
 the buildmaster's base directory.
 
-@item manhole.PasswordManhole
+@item buildbot.manhole.PasswordManhole
 This one accepts SSH connections but asks for a username and password
 when authenticating. It accepts only one such pair.
 
-@item manhole.TelnetManhole
+@item buildbot.manhole.TelnetManhole
 This accepts regular unencrypted telnet connections, and asks for a
 username/password pair before providing access. Because this
 username/password is transmitted in the clear, and because Manhole
@@ -447,9 +500,6 @@ To have the @code{Manhole} listen on all interfaces, use
 @code{"tcp:9999"} or simply 9999. This port specification uses
 @code{twisted.application.strports}, so you can make it listen on SSL
 or even UNIX-domain sockets if you want.
-
-Note that using any Manhole requires that the TwistedConch package be
-installed, and that you be using Twisted version 2.0 or later.
 
 The buildmaster's SSH server will use a different host key than the
 normal sshd running on a typical unix host. This will cause the ssh
@@ -501,3 +551,15 @@ data attributes of <Builder ''builder'' at 48963528>
 >>> win32 = _
 >>> win32.category = 'w32'
 @end example
+
+@node Metrics Options
+@subsection Metrics Options
+@code{c['metrics'] = dict(log_interval=10, periodic_interval=10)}
+
+@code{c['metrics']} can be a dictionary that configures various aspects of the metrics subsystem. If @code{c['metrics']} is None, then metrics collection, logging and reporting will be disabled.
+
+@code{log_interval} determines how often metrics should be logged to twistd.log. It default to 60s. If set to 0 or None, then logging of metrics will be disabled. This value can be changed via a reconfig.
+
+@code{periodic_interval} determines how often various non-event based metrics are collected, such as memory usage, uncollectable garbage, reactor delay. This defaults to 10s. If set to 0 or None, then periodic collection of this data is disabled. This value can also be changed via a reconifg.
+
+Read more about metrics in the @ref{Metrics} section of the documentation.
