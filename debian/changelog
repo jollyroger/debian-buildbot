@@ -1,3 +1,9 @@
+buildbot (0.8.4p1-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Wed, 29 Jun 2011 18:51:39 +0300
+
 buildbot (0.8.3p1-1) unstable; urgency=low
 
   * New upstream version (Closes: #587313).
