@@ -56,7 +56,10 @@ class ChangePerspective(NewCredPerspective):
             changedict['author'] = changedict['who']
             del changedict['who']
         if 'when' in changedict:
-            changedict['when_timestamp'] = epoch2datetime(changedict['when'])
+            when = None
+            if changedict['when'] is not None:
+                when = epoch2datetime(changedict['when'])
+            changedict['when_timestamp'] = when
             del changedict['when']
 
         # turn any bytestring keys into unicode, assuming utf8 but just
@@ -66,6 +69,7 @@ class ChangePerspective(NewCredPerspective):
         for key in changedict:
             if type(changedict[key]) == str:
                 changedict[key] = changedict[key].decode('utf8', 'replace')
+        changedict['files'] = list(changedict['files'])
         for i, file in enumerate(changedict.get('files', [])):
             if type(file) == str:
                 changedict['files'][i] = file.decode('utf8', 'replace')
