@@ -34,6 +34,7 @@ buildbot (0.8.3p1-1) unstable; urgency=low
   * fix-makeinfo-args.patch: move makeinfo scripting from debian/rules to
     separate patch which sets makeinfo arguments as for 0.7.12 package.
   * fix-info-dir.patch: backport doc patches from 0.7.12 package.
+  * gitpoller-multibyte.patch: fix multibyte comments processing in gitpoller.
 
  -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Tue, 08 Mar 2011 23:29:44 +0200
 
