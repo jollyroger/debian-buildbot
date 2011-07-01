@@ -1,8 +1,9 @@
 buildbot (0.8.4p1-1) unstable; urgency=low
 
   * New upstream version.
+  * Bump Standards-Version to 3.9.2.
 
- -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Wed, 29 Jun 2011 18:51:39 +0300
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 01 Jul 2011 12:50:21 +0300
 
 buildbot (0.8.3p1-1) unstable; urgency=low
 

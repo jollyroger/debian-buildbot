@@ -5,7 +5,7 @@ Maintainer: Matthias Klose <doko@debian.org>
 Uploaders: Andriy Senkovych <jolly_roger@itblog.org.ua>
 Build-Depends: debhelper (>= 7.0.50~), python-all (>= 2.6.6-3), python-twisted-core (>= 2.0), python-twisted-web, python-twisted-mail, python-jinja2 (>= 2.1), python-mock, texinfo
 Homepage: http://buildbot.net
-Standards-Version: 3.9.1
+Standards-Version: 3.9.2
 X-Python-Version: >= 2.5
 
 Package: buildbot
