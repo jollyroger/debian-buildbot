@@ -10,7 +10,7 @@ export VERSION = $(shell head -n1 debian/changelog | cut -d' ' -f2 | tr -d '()')
 make_docs:
 	$(MAKE) -C docs buildbot.info buildbot.html
 
-override_dh_auto_build: make_docs
+override_dh_auto_build: #make_docs
 	dh_auto_build
 
 override_dh_auto_clean:
@@ -33,6 +33,6 @@ override_dh_installinit:
 
 override_dh_installdocs:
 	dh_installdocs
-	# Copy necessary images to docs directory
-	mkdir -p ${DESTDIR}${DOCDIR}/images
-	cp docs/images/*.png ${DESTDIR}${DOCDIR}/images
+#	# Copy necessary images to docs directory
+#	mkdir -p ${DESTDIR}${DOCDIR}/images
+#	cp docs/images/*.png ${DESTDIR}${DOCDIR}/images

@@ -1,9 +1,0 @@
-.pc
-*.rej
-*.orig
-*.pyc
-*.egg-info
-_trial_temp/
-build/
-docs/buildbot.html
-docs/buildbot.info

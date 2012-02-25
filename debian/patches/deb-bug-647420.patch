@@ -1,0 +1,36 @@
+From 1fed964da6b1c15e409dacb6ce0c9585e3669f3c Mon Sep 17 00:00:00 2001
+From: "Dustin J. Mitchell" <dustin@mozilla.com>
+Date: Sun, 25 Sep 2011 10:23:59 -0500
+Subject: [PATCH] fix error when forcing build from IRC with no properties
+ defined (in tutorial)
+
+ buildbot/status/words.py |    3 +--
+ 1 files changed, 1 insertions(+), 2 deletions(-)
+
+Origin: upstream, https://github.com/buildbot/buildbot/commit/1fed96
+Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=647420
+
+diff --git a/buildbot/status/words.py b/buildbot/status/words.py
+index a511969..4f45041 100644
+--- a/buildbot/status/words.py
++++ b/buildbot/status/words.py
+@@ -495,7 +495,7 @@ class Contact(base.StatusReceiver):
+             self.send("sorry, bad revision '%s'" % revision)
+             return
+ 
+-        properties = None
++        properties = Properties()
+         if props:
+             # split props into name:value dict
+             pdict = {}
+@@ -505,7 +505,6 @@ class Contact(base.StatusReceiver):
+                 pdict[splitproperty[0]] = splitproperty[1]
+ 
+             # set properties
+-            properties = Properties()
+             for prop in pdict:
+                 pname = prop
+                 pvalue = pdict[prop]
+-- 
+1.7.9.1
+

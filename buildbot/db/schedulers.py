@@ -13,53 +13,14 @@
 #
 # Copyright Buildbot Team Members
 
-"""
-Support for schedulers in the database
-"""
-
-from buildbot.util import json
 import sqlalchemy as sa
 import sqlalchemy.exc
-from twisted.python import log
 from buildbot.db import base
 
 class SchedulersConnectorComponent(base.DBConnectorComponent):
-    """
-    A DBConnectorComponent to handle maintaining schedulers' state in the db.
-    """
+    # Documentation is in developer/database.rst
 
-    def getState(self, schedulerid):
-        """Get this scheduler's state, as a dictionary.  Returs a Deferred"""
-        def thd(conn):
-            schedulers_tbl = self.db.model.schedulers
-            q = sa.select([ schedulers_tbl.c.state ],
-                    whereclause=(schedulers_tbl.c.schedulerid == schedulerid))
-            row = conn.execute(q).fetchone()
-            if not row:
-                return {} # really shouldn't happen - the row should exist
-            try:
-                return json.loads(row.state)
-            except:
-                log.msg("JSON error loading state for scheduler #%s" % (schedulerid,))
-                return {}
-        return self.db.pool.do(thd)
-
-    def setState(self, schedulerid, state):
-        """Set this scheduler's stored state, represented as a JSON-able
-        dictionary.  Returs a Deferred.  Note that this will overwrite any
-        existing state; be careful with updates!"""
-        def thd(conn):
-            schedulers_tbl = self.db.model.schedulers
-            q = schedulers_tbl.update(
-                    whereclause=(schedulers_tbl.c.schedulerid == schedulerid))
-            conn.execute(q, state=json.dumps(state))
-        return self.db.pool.do(thd)
-
-    # TODO: maybe only the singular is needed?
     def classifyChanges(self, schedulerid, classifications):
-        """Record a collection of classifications in the scheduler_changes
-        table. CLASSIFICATIONS is a dictionary mapping CHANGEID to IMPORTANT
-        (boolean).  Returns a Deferred."""
         def thd(conn):
             tbl = self.db.model.scheduler_changes
             ins_q = tbl.insert()
@@ -85,10 +46,6 @@ class SchedulersConnectorComponent(base.DBConnectorComponent):
         return self.db.pool.do(thd)
 
     def flushChangeClassifications(self, schedulerid, less_than=None):
-        """
-        Flush all scheduler_changes for L{schedulerid}, limiting to those less
-        than C{less_than} if the parameter is supplied.  Returns a Deferred.
-        """
         def thd(conn):
             scheduler_changes_tbl = self.db.model.scheduler_changes
             wc = (scheduler_changes_tbl.c.schedulerid == schedulerid)
@@ -100,19 +57,6 @@ class SchedulersConnectorComponent(base.DBConnectorComponent):
 
     class Thunk: pass
     def getChangeClassifications(self, schedulerid, branch=Thunk):
-        """
-        Return the scheduler_changes rows for this scheduler, in the form of a
-        dictionary mapping changeid to a boolean (important).  Returns a
-        Deferred.
-
-        @param schedulerid: scheduler to look up changes for
-        @type schedulerid: integer
-
-        @param branch: limit to changes with this branch
-        @type branch: string or None (for default branch)
-
-        @returns: dictionary via Deferred
-        """
         def thd(conn):
             scheduler_changes_tbl = self.db.model.scheduler_changes
             changes_tbl = self.db.model.changes
@@ -129,18 +73,6 @@ class SchedulersConnectorComponent(base.DBConnectorComponent):
         return self.db.pool.do(thd)
 
     def getSchedulerId(self, sched_name, sched_class):
-        """
-        Get the schedulerid for the given scheduler, creating a new schedulerid
-        if none is found.
-
-        Note that this makes no attempt to "claim" the schedulerid: schedulers
-        with the same name and class, but running in different masters, will be
-        assigned the same schedulerid - with disastrous results.
-
-        @param sched_name: the scheduler's configured name
-        @param sched_class: the class name of this scheduler
-        @returns: schedulerid, via a Deferred
-        """
         def thd(conn):
             # get a matching row, *or* one without a class_name (from 0.8.0)
             schedulers_tbl = self.db.model.schedulers

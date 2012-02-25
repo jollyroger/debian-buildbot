@@ -15,7 +15,6 @@
 
 
 import weakref
-import gc
 import os, re, itertools
 from cPickle import load, dump
 
@@ -231,8 +230,6 @@ class BuilderStatus(styles.Versioned):
                 log.msg("re-writing upgraded build pickle")
                 build.saveYourself()
 
-            # handle LogFiles from after 0.5.0 and before 0.6.5
-            build.upgradeLogfiles()
             # check that logfiles exist
             build.checkLogfiles()
             return self.touchBuildCache(build)
@@ -247,8 +244,6 @@ class BuilderStatus(styles.Versioned):
 
         if events_only:
             return
-
-        gc.collect()
 
         # get the horizons straight
         if self.buildHorizon is not None:
@@ -507,7 +502,6 @@ class BuilderStatus(styles.Versioned):
         Steps, its ETA, etc), so it is safe to notify our watchers."""
 
         assert s.builder is self # paranoia
-        assert s.number == self.nextBuildNumber - 1
         assert s not in self.currentBuilds
         self.currentBuilds.append(s)
         self.touchBuildCache(s)

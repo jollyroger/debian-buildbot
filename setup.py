@@ -215,7 +215,9 @@ setup_args = {
               "buildbot.steps",
               "buildbot.steps.package",
               "buildbot.steps.package.rpm",
+              "buildbot.steps.source",
               "buildbot.process",
+              "buildbot.process.users",
               "buildbot.clients",
               "buildbot.monkeypatches",
               "buildbot.schedulers",
@@ -280,8 +282,9 @@ else:
         'twisted >= 8.0.0',
         'Jinja2 >= 2.1',
         'sqlalchemy >= 0.6',
-        # buildbot depends on sqlalchemy internals. See buildbot.db.model.
-        'sqlalchemy-migrate == 0.6',
+        # buildbot depends on sqlalchemy internals, and these are the tested
+        # versions.
+        'sqlalchemy-migrate ==0.6.0, ==0.6.1, ==0.7.0, ==0.7.1',
     ]
     # Python-2.6 and up includes json
     if not py_26:
@@ -291,8 +294,13 @@ else:
     if not py_26:
         setup_args['install_requires'].append('pysqlite')
 
+    setup_args['test_requires'] = [
+        'mock==0.7.1',
+    ]
+
     if os.getenv('NO_INSTALL_REQS'):
         setup_args['install_requires'] = None
+        setup_args['tests_require'] = None
 
 setup(**setup_args)
 

@@ -6,9 +6,6 @@ HOME_DIR=/var/lib/buildbot
 USER_NAME=buildbot
 USER_DESCR="Buildbot system user"
 
-#PID_DIR=/var/run/buildbot
-#LOG_DIR=/var/log/buildbot
-
 case "$1" in
     configure)
         # Create builbot user account if not exist
@@ -27,11 +24,6 @@ case "$1" in
 
         # Fix permissions on $HOME_DIR recursively
         chown -R $USER_NAME: $HOME_DIR
-
-        ## Fix permissions on created directories
-        #mkdir -p          $PID_DIR $LOG_DIR
-        #chown $USER_NAME: $PID_DIR $LOG_DIR
-        #chmod 775         $PID_DIR $LOG_DIR
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
