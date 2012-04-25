@@ -102,6 +102,18 @@ Arguments common to all :class:`BuildStep` subclasses:
     normally.  If you set ``doStepIf`` to a function, that function should
     accept one parameter, which will be the :class:`Step` object itself.
 
+.. index:: Buildstep Parameter; hideStepIf
+
+``hideStepIf``
+    A step can be optionally hidden from the waterfall and build details web pages.  To do
+    this, set the step's ``hideStepIf`` to a boolean value, or to a function that takes one
+    parameter, the :class:`BuildStepStatus` and returns a boolean value.  Steps are always
+    shown while they execute, however after the step as finished, this parameter
+    is evaluated (if a function) and if the value is True, the step is hidden.
+    For example, in order to hide the step if the step has been skipped, ::
+
+        factory.addStep(Foo(..., hideStepIf=lambda s, result: result==SKIPPED))
+
 .. index:: Buildstep Parameter; locks
 
 ``locks``
@@ -128,6 +140,16 @@ some of the classes have a bewildering array of options.
     stable yet. If you find any bugs please report them on the `Buildbot Trac
     <http://trac.buildbot.net/newticket>`_. The older Slave-side described source
     steps are :ref:`Source-Checkout-Slave-Side`.
+
+    The old source steps are imported like this::
+
+        from buildbot.steps.source import Git
+
+    while new source steps are in separate source-packages for each
+    version-control system::
+
+        from buildbot.steps.source.git import Git
+
 
 New users should, where possible, use the new implementations.  The old
 implementations will be deprecated in a later release.  Old users should take
@@ -182,8 +204,9 @@ parameters are mostly to specify where exactly the sources are coming from.
     outside of the workdir (like creating the workdir itself).
 
 ``alwaysUseLatest``
-    if True, bypass the usual ``update to the last Change`` behavior, and
-    always update to the latest changes instead.
+    if True, bypass the usual behavior of checking out the revision in the
+    source stamp, and always update to the latest revision in the repository
+    instead.
 
 ``retry``
     If set, this specifies a tuple of ``(delay, repeats)`` which means
@@ -197,38 +220,13 @@ parameters are mostly to specify where exactly the sources are coming from.
     The name of this parameter might vary depending on the Source step you
     are running. The concept explained here is common to all steps and
     applies to ``repourl`` as well as for ``baseURL`` (when
-    applicable). Buildbot, now being aware of the repository name via the
-    change source, might in some cases not need the repository URL. There
-    are multiple way to pass it through to this step, corresponding to
-    the type of the parameter given to this step:
+    applicable).
 
-    ``None``
-        In the case where no parameter is specified, the repository URL will
-        be taken directly from the Change attribute. This value should be used
-        if your ChangeSource step has all the information about how to reach
-        the Change.
-
-    string
-        The parameter might be a string. In this case, this string
-        will be used as the full repository URL. The value coming from
-        the ChangeSource step will be ignored.
-
-    format string
-        If the parameter is a string containing @code{%s}, then the
-        repository attribute from the Change will be substituted in
-        place of the ``%s``. This is usefull when the ChangeSource
-        step knows where the repository resides locally, but doesn't
-        know the scheme used to access it. For instance,
-        ``ssh://server/%s`` makes sense if the repository attribute is
-        the local path of the repository.
-
-    dict
-        In this case, the repository URL will be the value indexed by the
-        repository attribute in the dict given as parameter.
-
-    callable
-        The callable given as parameter will take the repository attribute from
-        the Change and its return value will be used as repository URL.
+    A common idiom is to pass ``Property('repository', 'url://default/repo/path')``
+    as repository. This grabs the repository from the source stamp of the
+    build. This can be a security issue, if you allow force builds from the
+    web, or have the :class:`WebStatus` change hooks enabled; as the buildslave
+    will download code from an arbitrary repository.
 
 ``timeout``
     Specifies the timeout for slave-side operations, in seconds.  If
@@ -270,23 +268,16 @@ have that installed. ::
 The Mercurial step takes the following arguments:
 
 ``repourl``
-   (required unless ``baseURL`` is provided): the URL at which the
-   Mercurial source repository is available.
-
-``baseURL``
-   (required unless ``repourl`` is provided): the base repository URL,
-   to which a branch name will be appended. It should probably end in a
-   slash.
+   where the Mercurial source repository is available.
 
 ``defaultBranch``
-   (allowed if and only if ``baseURL`` is provided): this specifies
-   the name of the branch to use when a Build does not provide one of
-   its own. This will be appended to ``baseURL`` to create the
+   this specifies the name of the branch to use when a Build does not provide
+   one of its own. This will be appended to ``repourl`` to create the
    string that will be passed to the ``hg clone`` command.
 
 ``branchType``
    either 'dirname' (default) or 'inrepo' depending on whether the
-   branch name should be appended to the ``baseURL`` or the branch
+   branch name should be appended to the ``repourl`` or the branch
    is a mercurial named branch and can be found within the ``repourl``.
 
 ``clobberOnBranchChange``
@@ -419,9 +410,9 @@ basic ways of setting up the checkout step, depending upon whether you
 are using multiple branches or not.
 
 The most versatile way to create the :bb:step:`SVN` step is with the
-``svnurl`` argument:
+``repourl`` argument:
 
-``svnurl``
+``repourl``
    (required): this specifies the ``URL`` argument that will be
    given to the :command:`svn checkout` command. It dictates both where
    the repository is located and which sub-tree should be
@@ -430,16 +421,16 @@ The most versatile way to create the :bb:step:`SVN` step is with the
    are using a remote Subversion repository which is accessible
    through HTTP at a URL of ``http://svn.example.com/repos``, and
    you wanted to check out the ``trunk/calc`` sub-tree, you would
-   use ``svnurl="http://svn.example.com/repos/trunk/calc"`` as an
+   use ``repourl="http://svn.example.com/repos/trunk/calc"`` as an
    argument to your :bb:step:`SVN` step.
 
-The ``svnurl`` argument can be considered as a universal means to
+The ``repourl`` argument can be considered as a universal means to
 create the :bb:step:`SVN` step as it ignores the branch information in the
 :class:`SourceStamp`. ::
 
    from buildbot.steps.source.svn import SVN
    factory.append(SVN(mode='full',
-                  svnurl='svn://svn.example.org/svn/myproject/trunk'))
+                  repourl='svn://svn.example.org/svn/myproject/trunk'))
 
 Alternatively, if you are building from multiple branches, then you
 should preferentially create the :bb:step:`SVN` step with the
@@ -469,7 +460,7 @@ should preferentially create the :bb:step:`SVN` step with the
    must come with a valid (not None) ``branch``.
 
    It is possible to mix to have a mix of :bb:step:`SVN` steps that use
-   either the ``svnurl` or ``baseURL`` arguments but not both at
+   either the ``repourl` or ``baseURL`` arguments but not both at
    the same time.
 
 ``username``
@@ -509,7 +500,7 @@ should preferentially create the :bb:step:`SVN` step with the
    SVN's incremental mode does not require a method.  The full mode
    has four methods defined:
 
-  ``clobber``
+   ``clobber``
       It removes the working directory for each build then makes full checkout.
 
    ``fresh``
@@ -530,6 +521,11 @@ should preferentially create the :bb:step:`SVN` step with the
       behavior of source checkout follows exactly same as
       incremental. It performs all the incremental checkout behavior
       in ``source`` directory.
+
+   ``export``
+      Similar to ``method='copy'``, except using ``svn export`` to create build
+      directory so that there are no ``.svn`` directories in the build
+      directory.
 
 If you are using branches, you must also make sure your
 ``ChangeSource`` will report the correct branch names.
@@ -558,7 +554,7 @@ This step takes the following arguments:
     probably on a remote machine. For example, if Buildbot was hosted in CVS
     then the cvsroot value you would use to get a copy of the Buildbot source
     code might be
-    ``:pserver:anonymous@@cvs.sourceforge.net:/cvsroot/buildbot``.
+    ``:pserver:anonymous@cvs.sourceforge.net:/cvsroot/buildbot``.
 
 ``cvsmodule``
     (required): specify the cvs ``module``, which is generally a
@@ -829,10 +825,10 @@ checkout or update. It takes the following arguments:
     (required): specify the CVSROOT value, which points to a CVS
     repository, probably on a remote machine. For example, the cvsroot
     value you would use to get a copy of the Buildbot source code is
-    ``:pserver:anonymous@@cvs.sourceforge.net:/cvsroot/buildbot``
+    ``:pserver:anonymous@cvs.sourceforge.net:/cvsroot/buildbot``
 
 ``cvsmodule``
-    (required): specify the cvs @code{module}, which is generally a
+    (required): specify the cvs ``module``, which is generally a
     subdirectory of the CVSROOT. The `cvsmodule` for the Buildbot source
     code is ``buildbot``.
 
@@ -912,7 +908,7 @@ should preferentially create the ``SVN`` step with the
     binary with a :option:`--username` option.
 
 ``password``
-    (optional): if specified, this will be passed to the @code{svn}
+    (optional): if specified, this will be passed to the ``svn``
     binary with a :option:`--password` option.  The password itself will be
     suitably obfuscated in the logs.
 
@@ -1152,8 +1148,8 @@ The ``Git`` step takes the following arguments:
     user/scheduler asks for a specific revision, this parameter is ignored.
 
 ``progress``
-    (optional): passes the (@code{--progress}) flag to (@code{git
-    fetch}). This solves issues of long fetches being killed due to
+    (optional): passes the (``--progress``) flag to (``git
+    fetch``). This solves issues of long fetches being killed due to
     lack of output, but requires Git 1.7.2 or later.
 
 This Source step integrates with :bb:chsrc:`GerritChangeSource`, and will automatically use
@@ -1296,6 +1292,9 @@ The :bb:step:`ShellCommand` arguments are:
     difficult questions about how to escape or interpret shell
     metacharacters.
 
+    If ``command`` contains nested lists (for example, from a properties
+    substitution), then that list will be flattened before it is executed.
+
 ``workdir``
     All ShellCommands are run by default in the ``workdir``, which
     defaults to the :file:`build` subdirectory of the slave builder's
@@ -1323,30 +1322,36 @@ The :bb:step:`ShellCommand` arguments are:
 
     These variable settings will override any existing ones in the
     buildslave's environment or the environment specified in the
-    :class:`Builder`. The exception is :envvar:`PYTHONPATH`, which is merged
-    with (actually prepended to) any existing :envvar:`PYTHONPATH` setting. The
-    value is treated as a list of directories to prepend, and a single
-    string is treated like a one-item list. For example, to prepend both
-    :file:`/usr/local/lib/python2.3` and :file:`/home/buildbot/lib/python`
-    to any existing :envvar:`PYTHONPATH` setting, you would do something like the
-    following::
-    
+    :class:`Builder`. The exception is :envvar:`PYTHONPATH`, which is
+    merged with (actually prepended to) any existing
+    :envvar:`PYTHONPATH` setting. The following example will prepend
+    :file:`/home/buildbot/lib/python` to any existing
+    :envvar:`PYTHONPATH`::
+
         from buildbot.steps.shell import ShellCommand
         f.addStep(ShellCommand(
                       command=["make", "test"],
-                      env={'PYTHONPATH': ["/usr/local/lib/python2.3",
-                                           "/home/buildbot/lib/python"] }))
+                      env={'PYTHONPATH': "/home/buildbot/lib/python"}))
+
+    To avoid the need of concatenating path together in the master config file,
+    if the value is a list, it will be joined together using the right platform
+    dependant separator.
     
     Those variables support expansion so that if you just want to prepend
     :file:`/home/buildbot/bin` to the :envvar:`PATH` environment variable, you can do
-    it by putting the value ``${PATH}`` at the end of the string like
+    it by putting the value ``${PATH}`` at the end of the value like
     in the example below. Variables that doesn't exists on the slave will be
     replaced by ``""``. ::
     
         from buildbot.steps.shell import ShellCommand
         f.addStep(ShellCommand(
                       command=["make", "test"],
-                      env={'PATH': "/home/buildbot/bin:${PATH}"}))
+                      env={'PATH': ["/home/buildbot/bin",
+                                    "${PATH}"]}))
+
+    Note that environment values must be strings (or lists that are turned into
+    strings).  In particular, numeric properties such as ``buildnumber`` must
+    be substituted using :ref:`WithProperties`.
 
 ``want_stdout``
     if ``False``, stdout from the child process is discarded rather than being
@@ -1465,6 +1470,12 @@ The :bb:step:`ShellCommand` arguments are:
     If this option is ``True`` (the default), then the step's logfile will describe the
     environment variables on the slave.  In situations where the environment is not
     relevant and is long, it may be easier to set ``logEnviron=False``.
+
+``interruptSignal``
+    If the command should be interrupted (either by buildmaster or timeout
+    etc.), what signal should be sent to the process, specified by name. By
+    default this is "KILL" (9). Specify "TERM" (15) to give the process a
+    chance to cleanup.  This functionality requires a 0.8.6 slave or newer.
 
 .. bb:step:: Configure
 
@@ -1852,6 +1863,18 @@ This command recursively deletes a directory on the slave. ::
 
 This step requires slave version 0.8.4 or later.
 
+.. bb:step:: MakeDirectory
+
+MakeDirectory
++++++++++++++++
+
+This command creates a directory on the slave. ::
+
+    from buildbot.steps.slave import MakeDirectory
+    f.addStep(MakeDirectory(dir="build/build"))
+
+This step requires slave version 0.8.5 or later.
+
 .. _Python-BuildSteps:
 
 Python BuildSteps
@@ -1938,7 +1961,7 @@ Generator. It uses `RestructuredText <http://docutils.sourceforge.net/rst.html>`
 as input format.
 
 The :bb:step:`Sphinx` step will run
-:program:`sphinx-build` or any other program spcified in its
+:program:`sphinx-build` or any other program specified in its
 ``sphinx`` argument and count the various warnings and error it
 detects. ::
 
@@ -2095,14 +2118,16 @@ project documentation. We want to move this file to the buildmaster,
 into a :file:`~/public_html` directory, so it can be visible to
 developers. This file will wind up in the slave-side working directory
 under the name :file:`docs/reference.html`. We want to put it into the
-master-side :file:`~/public_html/ref.html`. ::
+master-side :file:`~/public_html/ref.html`, and add a link to the HTML
+status to the uploaded file. ::
 
     from buildbot.steps.shell import ShellCommand
     from buildbot.steps.transfer import FileUpload
     
     f.addStep(ShellCommand(command=["make", "docs"]))
     f.addStep(FileUpload(slavesrc="docs/reference.html",
-                         masterdest="~/public_html/ref.html"))
+                         masterdest="/home/bb/public_html/ref.html",
+                         url="http://somesite/~buildbot/ref.html"))
 
 The ``masterdest=`` argument will be passed to :meth:`os.path.expanduser`,
 so things like ``~`` will be expanded properly. Non-absolute paths
@@ -2110,6 +2135,9 @@ will be interpreted relative to the buildmaster's base directory.
 Likewise, the ``slavesrc=`` argument will be expanded and
 interpreted relative to the builder's working directory.
 
+.. note:: The copied file will have the same permissions on the master
+          as on the slave, look at the ``mode=`` parameter to set it
+          differently.
 
 To move a file from the master to the slave, use the
 :bb:step:`FileDownload` command. For example, let's assume that some step
@@ -2157,8 +2185,15 @@ creation time (:ref:`Buildslave-Options`).
 
 The ``keepstamp=`` argument is a boolean that, when ``True``, forces
 the modified and accessed time of the destination file to match the
-times of the source file.  When ``False`` (the default), the modified and accessed times
-of the destination file are set to the current time on the buildmaster.
+times of the source file.  When ``False`` (the default), the modified
+and accessed times of the destination file are set to the current time
+on the buildmaster.
+
+The ``url=`` argument allows you to specify an url that will be
+displayed in the HTML status. The title of the url will be the name of
+the item transfered (directory for :class:`DirectoryUpload` or file
+for :class:`FileUpload`). This allows the user to add a link to the
+uploaded item if that one is uploaded to an accessible place.
 
 .. bb:step:: DirectoryUpload
 
@@ -2173,7 +2208,8 @@ just for directories. However it does not support the ``maxsize``,
 ``blocksize`` and ``mode`` arguments. As an example, let's assume an
 generated project documentation, which consists of many files (like the output
 of :command:`doxygen` or :command:`epydoc`). We want to move the entire documentation to the
-buildmaster, into a :file:`~/public_html/docs` directory. On the slave-side
+buildmaster, into a :file:`~/public_html/docs` directory, and add a
+link to the uploaded documentation on the HTML status page. On the slave-side
 the directory can be found under :file:`docs`::
 
     from buildbot.steps.shell import ShellCommand
@@ -2181,7 +2217,8 @@ the directory can be found under :file:`docs`::
     
     f.addStep(ShellCommand(command=["make", "docs"]))
     f.addStep(DirectoryUpload(slavesrc="docs",
-                    masterdest="~/public_html/docs"))
+                              masterdest="~/public_html/docs",
+                              url="~buildbot/docs"))
 
 The :bb:step:`DirectoryUpload` step will create all necessary directories and
 transfers empty directories, too.
@@ -2193,6 +2230,10 @@ encoding used (currently tar).
 
 The optional ``compress`` argument can be given as ``'gz'`` or
 ``'bz2'`` to compress the datastream.
+
+.. note:: The permissions on the copied files will be the same on the
+          master as originately on the slave, see :option:`buildslave
+          create-slave --umask` to change the default one.
 
 .. bb:step:: StringDownload
 .. bb:step:: JSONStringDownload
@@ -2375,9 +2416,10 @@ continually triggers itself, because the schedulers are specified
 by name.
 
 If ``waitForFinish`` is ``True``, then the step will not finish until
-all of the builds from the triggered schedulers have finished. If this
-argument is ``False`` (the default) or not given, then the buildstep
-succeeds immediately after triggering the schedulers.
+all of the builds from the triggered schedulers have finished. Hyperlinks
+are added to the waterfall and the build detail web pages for each
+triggered build. If this argument is ``False`` (the default) or not given,
+then the buildstep succeeds immediately after triggering the schedulers.
 
 The SourceStamp to use for the triggered build is controlled by the arguments
 ``updateSourceStamp``, ``alwaysUseLatest``, and ``sourceStamp``.  If

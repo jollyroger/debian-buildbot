@@ -4,7 +4,6 @@ include docs/examples/*.cfg
 include docs/conf.py
 include docs/Makefile
 include docs/buildbot.1
-include docs/*.png
 include docs/*.rst
 include docs/_images/*
 include docs/_static/*
@@ -17,6 +16,8 @@ include docs/manual/_images/*.txt
 include docs/manual/_images/*.ai
 include docs/manual/_images/icon.blend
 include docs/manual/_images/Makefile
+include docs/bbdocs/*
+include docs/developer/*
 
 include buildbot/scripts/sample.cfg
 include buildbot/status/web/files/*
@@ -26,6 +27,7 @@ include buildbot/buildbot.png
 
 include buildbot/db/migrate/README buildbot/db/migrate/migrate.cfg
 
-include contrib/* contrib/windows/* contrib/os-x/* contrib/css/*
+include contrib/* contrib/windows/* contrib/os-x/* contrib/css/* contrib/libvirt/*
+include contrib/blockertest/*
 include contrib/trac/* contrib/trac/bbwatcher/* contrib/trac/bbwatcher/templates/*
 include contrib/init-scripts/*

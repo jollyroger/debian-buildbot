@@ -176,9 +176,9 @@ ChangeSource variant for each parsing function.
 Once you've chosen a maildir location and a parsing function, create
 the change source and put it in ``change_source`` ::
 
-    from buildbot.changes.mail import SyncmailMaildirSource
-    c['change_source'] = SyncmailMaildirSource("~/maildir-buildbot",
-                                               prefix="/trunk/")
+    from buildbot.changes.mail import CVSMaildirSource
+    c['change_source'] = CVSMaildirSource("~/maildir-buildbot",
+                                            prefix="/trunk/")
 
 .. _Subscribing-the-Buildmaster:
 
@@ -324,22 +324,12 @@ contrib directory.
 The script sends an email containing all the files submitted in
 one directory. It is invoked by using the :file:`CVSROOT/loginfo` facility.
 
-The Buildbot's :bb:chsrc:`CVSMaildirSource` knows how to parse 
-these messages and turn them into Change objects. It takes two parameters, 
-the directory name of the maildir root, and an optional function to create
-a URL for each file. The function takes three parameters::
-
-    file   - file name
-    oldRev - old revision of the file
-    newRev - new revision of the file
-
-It must return, a url for the file in question. For example::
-
-    def fileToUrl( file, oldRev, newRev ):
-        return 'http://example.com/cgi-bin/cvsweb.cgi/' + file + '?rev=' + newRev
+The Buildbot's :bb:chsrc:`CVSMaildirSource` knows how to parse these messages
+and turn them into Change objects. It takes the directory name of the maildir
+root.  For example::
 
     from buildbot.changes.mail import CVSMaildirSource
-    c['change_source'] = CVSMaildirSource("/home/buildbot/Mail", urlmaker=fileToUrl)
+    c['change_source'] = CVSMaildirSource("/home/buildbot/Mail")
 
 Configuration of CVS and buildbot_cvs_mail.py
 #############################################
@@ -458,17 +448,20 @@ The :bb:chsrc:`PBChangeSource` is created with the following arguments.
     which port to listen on. If ``None`` (which is the default), it
     shares the port used for buildslave connections.
 
-`user` and `passwd`
-    The user/passwd account information that the client program must use
-    to connect. Defaults to ``change`` and ``changepw``.  Do not use
-    these defaults on a publicly exposed port!
+`user`
+    The user account that the client program must use to connect. Defaults to
+    ``change``
+
+`passwd`
+    The password for the connection - defaults to ``changepw``.  Do not use
+    this default on a publicly exposed port!
 
 `prefix`
     The prefix to be found and stripped from filenames delivered over the
-    connection, defaulting to ``None``. Any filenames which do not start with this prefix will be
-    removed. If all the filenames in a given Change are removed, the that
-    whole Change will be dropped. This string should probably end with a
-    directory separator.
+    connection, defaulting to ``None``. Any filenames which do not start with
+    this prefix will be removed. If all the filenames in a given Change are
+    removed, the that whole Change will be dropped. This string should probably
+    end with a directory separator.
 
     This is useful for changes coming from version control systems that
     represent branches as parent directories within the repository (like SVN
@@ -484,7 +477,7 @@ The :bb:chsrc:`PBChangeSource` is created with the following arguments.
 For example::
 
     from buildbot.changes import pb
-    c['changes'] = pb.PBChangeSource(port=9999, user='laura', password='fpga')
+    c['change_source'] = pb.PBChangeSource(port=9999, user='laura', passwd='fpga')
 
 The following hooks are useful for sending changes to a :bb:chsrc:`PBChangeSource`\:
 
@@ -516,6 +509,7 @@ hostname/portnumber as appropriate for your buildbot:
     
     [hgbuildbot]
     master = buildmaster.example.org:9987
+    # .. other hgbuildbot parameters ..
 
 .. note:: Mercurial lets you define multiple ``changegroup`` hooks by
    giving them distinct names, like ``changegroup.foo`` and
@@ -533,6 +527,12 @@ whereas the ``incoming`` hook is run with just one revision at a
 time. The ``hgbuildbot.hook`` function will only work with the
 ``changegroup`` hook.
 
+Changes' attribute ``properties`` has an entry ``is_merge`` which is set to
+true when the change was caused by a merge.
+
+Authentication
+##############
+
 If the buildmaster :bb:chsrc:`PBChangeSource` is configured to require
 sendchange credentials then you can set these with the ``auth``
 parameter. When this parameter is not set it defaults to
@@ -543,8 +543,8 @@ authentication.
 .. code-block:: ini
 
     [hgbuildbot]
-    master = buildmaster.example.org:9987
     auth = clientname:supersecret
+    # ...
 
 You can set this parameter in either the global :file:`/etc/mercurial/hgrc`,
 your personal :file:`~/.hgrc` file or the repository local :file:`.hg/hgrc`
@@ -552,37 +552,40 @@ file. But since this value is stored in plain text, you must make sure that
 it can only be read by those users that need to know the authentication
 credentials.
 
+Branch Type
+###########
+
 The ``[hgbuildbot]`` section has two other parameters that you
 might specify, both of which control the name of the branch that is
 attached to the changes coming from this hook.
 
 One common branch naming policy for Mercurial repositories is to use
-it just like Darcs: each branch goes into a separate repository, and
-all the branches for a single project share a common parent directory.
-For example, you might have :file:`/var/repos/{PROJECT}/trunk/` and
-:file:`/var/repos/{PROJECT}/release`. To use this style, use the
-``branchtype = dirname`` setting, which simply uses the last
-component of the repository's enclosing directory as the branch name:
+Mercurial's built-in branches (the kind created with :command:`hg
+branch` and listed with :command:`hg branches`). This feature
+associates persistent names with particular  lines of descent within a
+single repository. (note that the buildbot ``source.Mercurial``
+checkout step does not yet support this kind of branch). To have the
+commit hook deliver this sort of branch name with the Change object,
+use ``branchtype = inrepo``, this is the default behavior:
 
 .. code-block:: ini
 
     [hgbuildbot]
-    master = buildmaster.example.org:9987
-    branchtype = dirname
-
-Another approach is to use Mercurial's built-in branches (the kind
-created with :command:`hg branch` and listed with :command:`hg
-branches`). This feature associates persistent names with particular
-lines of descent within a single repository. (note that the buildbot
-``source.Mercurial`` checkout step does not yet support this kind
-of branch). To have the commit hook deliver this sort of branch name
-with the Change object, use ``branchtype = inrepo``:
-
-.. code-block:: ini
-
-    [hgbuildbot]
-    master = buildmaster.example.org:9987
     branchtype = inrepo
+    # ...
+
+Another approach is for each branch to go into a separate repository,
+and all the branches for a single project share a common parent
+directory. For example, you might have :file:`/var/repos/{PROJECT}/trunk/` and
+:file:`/var/repos/{PROJECT}/release`. To use this style, use the
+``branchtype = dirname`` setting, which simply uses the last component
+of the repository's enclosing directory as the branch name:
+
+.. code-block:: ini
+
+    [hgbuildbot]
+    branchtype = dirname
+    # ...
 
 Finally, if you want to simply specify the branchname directly, for
 all changes, use ``branch = BRANCHNAME``. This overrides
@@ -591,26 +594,57 @@ all changes, use ``branch = BRANCHNAME``. This overrides
 .. code-block:: ini
 
     [hgbuildbot]
-    master = buildmaster.example.org:9987
     branch = trunk
+    # ...
 
 If you use ``branch=`` like this, you'll need to put a separate
 :file:`.hgrc` in each repository. If you use ``branchtype=``, you may be
 able to use the same :file:`.hgrc` for all your repositories, stored in
 :file:`~/.hgrc` or :file:`/etc/mercurial/hgrc`.
 
-As twisted needs to hook some Signals, and that some web server are
-strictly forbiding that, the parameter ``fork`` in the
+Compatibility
+#############
+
+As twisted needs to hook some signals, and some web servers 
+strictly forbid that, the parameter ``fork`` in the
 ``[hgbuildbot]`` section will instruct mercurial to fork before
 sending the change request. Then as the created process will be of short
 life, it is considered as safe to disable the signal restriction in
 the Apache setting like that ``WSGIRestrictSignal Off``. Refer to the
 documentation of your web server for other way to do the same.
 
+Resulting Changes
+#################
+
 The ``category`` parameter sets the category for any changes generated from
-the hook.  Likewise, the ``project`` parameter sets the project.  Changes'
-``repository`` attributes are formed from the Mercurial repo path by
-stripping ``strip`` slashes.
+the hook.  Likewise, the ``project`` parameter sets the project.
+
+Changes' ``repository`` attributes are formed from the Mercurial repo path by
+stripping ``strip`` slashes on the left, then prepending the ``baseurl``.  For
+example, assume the following parameters:
+
+.. code-block:: ini
+
+    [hgbuildbot]
+    baseurl = http://hg.myorg.com/repos/
+    strip = 3
+    # ...
+
+Then a repopath of ``/var/repos/myproject/release`` would have its left 3
+slashes stripped, leaving ``myproject/release``, after which the base URL would
+be prepended, to create ``http://hg.myorg.com/repos/myproject/release``.
+
+The ``hgbuildbot`` ``baseurl`` value defaults to the value of the same
+parameter in the ``web`` section of the configuration.
+
+.. note:: older versions of Buildbot created repository strings that did not
+    contain an entire URL.  To continue this pattern, set the ``hgbuildbot``
+    ``baseurl`` parameter to an empty string:
+
+    .. code-block:: ini
+
+        [hgbuildbot]
+        baseurl = http://hg.myorg.com/repos/
 
 .. _Bzr-Hook:
 
@@ -861,6 +895,7 @@ multiple branches.
     sufficient.
 
 ``revlinktmpl``
+    This parameter is deprecated in favour of specifying a global revlink option.
     This parameter allows a link to be provided for each revision (for example,
     to websvn or viewvc).  These links appear anywhere changes are shown, such
     as on build or change pages.  The proper form for this parameter is an URL
@@ -1014,7 +1049,7 @@ arguments:
 An configuration for the git poller might look like this::
 
     from buildbot.changes.gitpoller import GitPoller
-    c['change_source'] = GitPoller('git@@example.com:foobaz/myrepo.git',
+    c['change_source'] = GitPoller('git@example.com:foobaz/myrepo.git',
                                    branch='great_new_feature',
                                    workdir='/home/buildbot/gitpoller_workdir')
 
@@ -1122,8 +1157,8 @@ Change Hooks (HTTP Notifications)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Buildbot already provides a web frontend, and that frontend can easily be used
-to receive HTTP push notifications of commits from services like GitHub.  See
-:ref:`Change-Hooks` for more information.
+to receive HTTP push notifications of commits from services like GitHub or
+GoogleCode. See :ref:`Change-Hooks` for more information.
 
 .. bb:chsrc:: GoogleCodeAtomPoller
 
@@ -1145,7 +1180,10 @@ are not understood (yet). It accepts the following arguments:
 As an example, to poll the Ostinato project's commit feed every 3 hours, the
 configuration would look like this::
 
-    from contrib.googlecode_atom import GoogleCodeAtomPoller
+    from googlecode_atom import GoogleCodeAtomPoller
     c['change_source'] = GoogleCodeAtomPoller(
         feedurl="http://code.google.com/feeds/p/ostinato/hgchanges/basic",
         pollinterval=10800) 
+
+(note that you will need to download ``googlecode_atom.py`` from the Buildbot
+source and install it somewhere on your PYTHONPATH first)

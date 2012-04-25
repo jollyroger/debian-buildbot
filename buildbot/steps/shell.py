@@ -20,6 +20,7 @@ from twisted.spread import pb
 from buildbot.process import buildstep
 from buildbot.status.results import SUCCESS, WARNINGS, FAILURE
 from buildbot.status.logfile import STDOUT, STDERR
+from buildbot import config
 
 # for existing configurations that import WithProperties from here.  We like
 # to move this class around just to keep our readers guessing.
@@ -64,7 +65,7 @@ class ShellCommand(buildstep.LoggingBuildStep):
     """
 
     name = "shell"
-    renderables = [ 'description', 'descriptionDone', 'slaveEnvironment', 'remote_kwargs', 'command' ]
+    renderables = [ 'description', 'descriptionDone', 'slaveEnvironment', 'remote_kwargs', 'command', 'logfiles' ]
     description = None # set this to a list of short strings to override
     descriptionDone = None # alternate description when the step is complete
     command = None # set this to a command, or set in kwargs
@@ -139,6 +140,13 @@ class ShellCommand(buildstep.LoggingBuildStep):
     def setCommand(self, command):
         self.command = command
 
+    def _flattenList(self, mainlist, commands):
+        for x in commands:
+          if isinstance(x, (str, unicode)):
+             mainlist.append(x)
+          elif x != []:
+             self._flattenList(mainlist, x)
+
     def describe(self, done=False):
         """Return a list of short strings to describe this step, for the
         status display. This uses the first few words of the shell command.
@@ -170,13 +178,28 @@ class ShellCommand(buildstep.LoggingBuildStep):
             words = self.command
             if isinstance(words, (str, unicode)):
                 words = words.split()
-            if len(words) < 1:
+
+            try:
+                len(words)
+            except AttributeError:
+                # WithProperties and Property don't have __len__
                 return ["???"]
-            if len(words) == 1:
-                return ["'%s'" % words[0]]
-            if len(words) == 2:
-                return ["'%s" % words[0], "%s'" % words[1]]
-            return ["'%s" % words[0], "%s" % words[1], "...'"]
+
+            tmp = []
+            for x in words:
+                if isinstance(x, (str, unicode)):
+                   tmp.append(x)
+                else:
+                   self._flattenList(tmp, x)
+
+            if len(tmp) < 1:
+                return ["???"]
+            if len(tmp) == 1:
+                return ["'%s'" % tmp[0]]
+            if len(tmp) == 2:
+                return ["'%s" % tmp[0], "%s'" % tmp[1]]
+            return ["'%s" % tmp[0], "%s" % tmp[1], "...'"]
+
         except:
             log.err(failure.Failure(), "Error describing step")
             return ["???"]
@@ -201,14 +224,25 @@ class ShellCommand(buildstep.LoggingBuildStep):
     def buildCommandKwargs(self, warnings):
         kwargs = buildstep.LoggingBuildStep.buildCommandKwargs(self)
         kwargs.update(self.remote_kwargs)
-        kwargs['command'] = self.command
+        tmp = []
+        if isinstance(self.command, list):
+           self._flattenList(tmp, self.command) 
+        else:
+           tmp = self.command
+
+        kwargs['command'] = tmp 
 
         # check for the usePTY flag
         if kwargs.has_key('usePTY') and kwargs['usePTY'] != 'slave-config':
             if self.slaveVersionIsOlderThan("svn", "2.7"):
                 warnings.append("NOTE: slave does not allow master to override usePTY\n")
                 del kwargs['usePTY']
-
+        
+        # check for the interruptSignal flag
+        if kwargs.has_key('interruptSignal') and self.slaveVersionIsOlderThan("shell", "2.15"):
+            warnings.append("NOTE: slave does not allow master to specify interruptSignal\n")
+            del kwargs['interruptSignal']
+        
         return kwargs
 
     def start(self):
@@ -263,8 +297,9 @@ class SetProperty(ShellCommand):
         self.extract_fn = extract_fn
         self.strip = strip
 
-        assert (property is not None) ^ (extract_fn is not None), \
-                "Exactly one of property and extract_fn must be set"
+        if not ((property is not None) ^ (extract_fn is not None)):
+            config.error(
+                "Exactly one of property and extract_fn must be set")
 
         ShellCommand.__init__(self, **kwargs)
 

@@ -51,13 +51,14 @@ class BuildStatus(styles.Versioned, properties.PropertiesMixin):
     finishedWatchers = []
     testResults = {}
 
-    def __init__(self, parent, number):
+    def __init__(self, parent, master, number):
         """
         @type  parent: L{BuilderStatus}
         @type  number: int
         """
         assert interfaces.IBuilderStatus(parent)
         self.builder = parent
+        self.master = master
         self.number = number
         self.watchers = []
         self.updates = {}
@@ -186,12 +187,6 @@ class BuildStatus(styles.Versioned, properties.PropertiesMixin):
     def getTestResults(self):
         return self.testResults
 
-    def getTestResultsOrd(self):
-        trs = self.testResults.keys()
-        trs.sort()
-        ret = [ self.testResults[t] for t in trs]
-        return ret
-
     def getLogs(self):
         # TODO: steps should contribute significant logs instead of this
         # hack, which returns every log from every step. The logs should get
@@ -238,7 +233,7 @@ class BuildStatus(styles.Versioned, properties.PropertiesMixin):
         list. Create a BuildStepStatus object to which it can send status
         updates."""
 
-        s = BuildStepStatus(self, len(self.steps))
+        s = BuildStepStatus(self, self.master, len(self.steps))
         s.setName(name)
         self.steps.append(s)
         return s
@@ -355,18 +350,22 @@ class BuildStatus(styles.Versioned, properties.PropertiesMixin):
             # was interrupted. The builder will have a 'shutdown' event, but
             # someone looking at just this build will be confused as to why
             # the last log is truncated.
-        for k in 'builder', 'watchers', 'updates', 'finishedWatchers':
+        for k in [ 'builder', 'watchers', 'updates', 'finishedWatchers',
+                   'master' ]:
             if k in d: del d[k]
         return d
 
     def __setstate__(self, d):
         styles.Versioned.__setstate__(self, d)
-        # self.builder must be filled in by our parent when loading
-        for step in self.steps:
-            step.build = self
         self.watchers = []
         self.updates = {}
         self.finishedWatchers = []
+
+    def setProcessObjects(self, builder, master):
+        self.builder = builder
+        self.master = master
+        for step in self.steps:
+            step.setProcessObjects(self, master)
 
     def upgradeToVersion1(self):
         if hasattr(self, "sourceStamp"):

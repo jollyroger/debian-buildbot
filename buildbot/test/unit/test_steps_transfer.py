@@ -20,8 +20,9 @@ from mock import Mock
 
 from buildbot.process.properties import Properties
 from buildbot.util import json
-from buildbot.steps.transfer import StringDownload, JSONStringDownload, JSONPropertiesDownload, \
-    FileUpload
+from buildbot.steps.transfer import StringDownload, JSONStringDownload
+from buildbot.steps.transfer import JSONPropertiesDownload, FileUpload
+from buildbot import config
 
 class TestFileUpload(unittest.TestCase):
     def setUp(self):
@@ -30,7 +31,12 @@ class TestFileUpload(unittest.TestCase):
         os.unlink(self.destfile)
 
     def tearDown(self):
-        os.unlink(self.destfile)
+        if os.path.exists(self.destfile):
+            os.unlink(self.destfile)
+
+    def test_constructor_mode_type(self):
+        self.assertRaises(config.ConfigErrors, lambda :
+                FileUpload(slavesrc=__file__, masterdest='xyz', mode='g+rwx'))
 
     def testBasic(self):
         s = FileUpload(slavesrc=__file__, masterdest=self.destfile)
@@ -93,6 +99,35 @@ class TestFileUpload(unittest.TestCase):
                           os.path.getmtime(self.destfile) )
         self.assertAlmostEquals(timestamp[0],desttimestamp[0],places=5)
         self.assertAlmostEquals(timestamp[1],desttimestamp[1],places=5)
+
+    def testURL(self):
+        s = FileUpload(slavesrc=__file__, masterdest=self.destfile, url="http://server/file")
+        s.build = Mock()
+        s.build.getProperties.return_value = Properties()
+        s.build.getSlaveCommandVersion.return_value = "2.13"
+
+        s.step_status = Mock()
+        s.step_status.addURL = Mock()
+        s.buildslave = Mock()
+        s.remote = Mock()
+        s.start()
+
+        for c in s.remote.method_calls:
+            name, command, args = c
+            commandName = command[3]
+            kwargs = command[-1]
+            if commandName == 'uploadFile':
+                self.assertEquals(kwargs['slavesrc'], __file__)
+                writer = kwargs['writer']
+                writer.remote_write(open(__file__, "rb").read())
+                self.assert_(not os.path.exists(self.destfile))
+                writer.remote_close()
+                break
+        else:
+            self.assert_(False, "No uploadFile command found")
+
+        s.step_status.addURL.assert_called_once_with(
+            os.path.basename(self.destfile), "http://server/file")
 
 class TestStringDownload(unittest.TestCase):
     def testBasic(self):

@@ -14,9 +14,10 @@
 # Copyright Buildbot Team Members
 
 
+import re
 from buildbot.status.results import SUCCESS, FAILURE, WARNINGS
 from buildbot.steps.shell import ShellCommand
-import re
+from buildbot import config
 
 try:
     import cStringIO
@@ -226,11 +227,11 @@ class Sphinx(ShellCommand):
 
         if sphinx_builddir is None:
             # Who the heck is not interested in the built doc ?
-            raise TypeError("Sphinx argument sphinx_builddir is required")
+            config.error("Sphinx argument sphinx_builddir is required")
 
         if mode not in ('incremental', 'full'):
-            raise TypeError("Sphinx argument mode has to be 'incremental' or 'full' is required")
-            
+            config.error("Sphinx argument mode has to be 'incremental' or" +
+                          "'full' is required")
 
         self.warnings = 0
         self.success = False

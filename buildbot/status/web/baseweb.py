@@ -22,16 +22,16 @@ from twisted.application import strports, service
 from twisted.web import server, distrib, static
 from twisted.spread import pb
 from twisted.web.util import Redirect
-
+from buildbot import config
 from buildbot.interfaces import IStatusReceiver
-
 from buildbot.status.web.base import StaticFile, createJinjaEnv
 from buildbot.status.web.feeds import Rss20StatusResource, \
      Atom10StatusResource
 from buildbot.status.web.waterfall import WaterfallStatusResource
 from buildbot.status.web.console import ConsoleStatusResource
 from buildbot.status.web.olpb import OneLinePerBuild
-from buildbot.status.web.grid import GridStatusResource, TransposedGridStatusResource
+from buildbot.status.web.grid import GridStatusResource
+from buildbot.status.web.grid import TransposedGridStatusResource
 from buildbot.status.web.changes import ChangesResource
 from buildbot.status.web.builder import BuildersResource
 from buildbot.status.web.buildstatus import BuildStatusStatusResource
@@ -39,7 +39,7 @@ from buildbot.status.web.slaves import BuildSlavesResource
 from buildbot.status.web.status_json import JsonStatusResource
 from buildbot.status.web.about import AboutBuildbot
 from buildbot.status.web.authz import Authz
-from buildbot.status.web.auth import AuthFailResource
+from buildbot.status.web.auth import AuthFailResource,AuthzFailResource, LoginResource, LogoutResource
 from buildbot.status.web.root import RootPage
 from buildbot.status.web.users import UsersResource
 from buildbot.status.web.change_hook import ChangeHookResource
@@ -280,17 +280,21 @@ class WebStatus(service.MultiService):
         self.distrib_port = distrib_port
         self.num_events = num_events
         if num_events_max:
-            assert num_events_max >= num_events
+            if num_events_max < num_events:
+                config.error(
+                    "num_events_max must be greater than num_events")
             self.num_events_max = num_events_max
         self.public_html = public_html
 
         # make up an authz if allowForce was given
         if authz:
             if allowForce is not None:
-                raise ValueError("cannot use both allowForce and authz parameters")
+                config.error(
+                    "cannot use both allowForce and authz parameters")
             if auth:
-                raise ValueError("cannot use both auth and authz parameters (pass "
-                                 "auth as an Authz parameter)")
+                config.error(
+                    "cannot use both auth and authz parameters (pass " +
+                    "auth as an Authz parameter)")
         else:
             # invent an authz
             if allowForce and auth:
@@ -319,9 +323,10 @@ class WebStatus(service.MultiService):
         self.setupUsualPages(numbuilds=numbuilds, num_events=num_events,
                              num_events_max=num_events_max)
 
-        # Set up the jinja templating engine.
-        self.templates = createJinjaEnv(revlink, changecommentlink,
-                                        repositories, projects)
+        self.revlink = revlink
+        self.changecommentlink = changecommentlink
+        self.repositories = repositories
+        self.projects = projects
 
         # keep track of cached connections so we can break them when we shut
         # down. See ticket #102 for more details.
@@ -356,7 +361,10 @@ class WebStatus(service.MultiService):
                       OneLinePerBuild(numbuilds=numbuilds))
         self.putChild("about", AboutBuildbot())
         self.putChild("authfail", AuthFailResource())
+        self.putChild("authzfail", AuthzFailResource())
         self.putChild("users", UsersResource())
+        self.putChild("login", LoginResource())
+        self.putChild("logout", LogoutResource())
 
     def __repr__(self):
         if self.http_port is None:
@@ -375,7 +383,7 @@ class WebStatus(service.MultiService):
         # just using self.parent, so that when we are "disowned" (and thus
         # parent=None), any remaining HTTP clients of this WebStatus will still
         # be able to get reasonable results.
-        self.master = parent
+        self.master = parent.master
 
         # set master in IAuth instance
         if self.authz.auth:
@@ -389,6 +397,14 @@ class WebStatus(service.MultiService):
         
         rotateLength = either(self.logRotateLength, self.master.log_rotation.rotateLength)
         maxRotatedFiles = either(self.maxRotatedFiles, self.master.log_rotation.maxRotatedFiles)
+
+        # Set up the jinja templating engine.
+        if self.revlink:
+            revlink = self.revlink
+        else:
+            revlink = self.master.config.revlink
+        self.templates = createJinjaEnv(revlink, self.changecommentlink,
+                                        self.repositories, self.projects)
 
         if not self.site:
             
@@ -497,7 +513,7 @@ class WebStatus(service.MultiService):
     # This is in preparation for removal of the IControl hierarchy
     # entirely.
 
-    def checkConfig(self, otherStatusReceivers):
+    def checkConfig(self, otherStatusReceivers, errors):
         duplicate_webstatus=0
         for osr in otherStatusReceivers:
             if isinstance(osr,WebStatus):
@@ -511,8 +527,10 @@ class WebStatus(service.MultiService):
                         duplicate_webstatus += 1
 
         if duplicate_webstatus:
-            raise RuntimeError("%d Webstatus objects have same port: %s"
-                    % (duplicate_webstatus, self.http_port))
+            errors.addError(
+                "%d Webstatus objects have same port: %s"
+                    % (duplicate_webstatus, self.http_port),
+            )
 
 # resources can get access to the IStatus by calling
 # request.site.buildbot_service.getStatus()

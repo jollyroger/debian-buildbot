@@ -1,8 +1,8 @@
 Document: buildbot
-Title: BuildBot Manual
+Title: Buildbot Manual
 Section: Programming/Testing
 Author: Brian Warner
-Abstract: The BuildBot is a system to automate the compile/test cycle
+Abstract: The Buildbot is a system to automate the compile/test cycle
  required by most software projects to validate code changes. By
  automatically rebuilding and testing the tree each time something has
  changed, build problems are pinpointed quickly, before other
@@ -16,5 +16,8 @@ Abstract: The BuildBot is a system to automate the compile/test cycle
  therefore easier to improve.
 
 Format: HTML
-Index: /usr/share/doc/buildbot/buildbot.html
-Files: /usr/share/doc/buildbot/buildbot.html
+Index: /usr/share/doc/buildbot/html/index.html
+Files: /usr/share/doc/buildbot/html/*.html
+ /usr/share/doc/buildbot/html/developer/*.html
+ /usr/share/doc/buildbot/html/manual/*.html
+ /usr/share/doc/buildbot/html/tutorial/*.html

@@ -27,6 +27,7 @@ from buildbot.process.buildstep import RemoteCommand, BuildStep
 from buildbot.process.buildstep import SUCCESS, FAILURE, SKIPPED
 from buildbot.interfaces import BuildSlaveTooOldError
 from buildbot.util import json
+from buildbot import config
 
 
 class _FileWriter(pb.Referenceable):
@@ -80,7 +81,7 @@ class _FileWriter(pb.Referenceable):
         if self.mode is not None:
             os.chmod(self.destfile, self.mode)
 
-    def __del__(self):
+    def cancel(self):
         # unclean shutdown, the file is probably truncated, so delete it
         # altogether rather than deliver a corrupted file
         fp = getattr(self, "fp", None)
@@ -168,18 +169,10 @@ class _DirectoryWriter(_FileWriter):
 
 
 class StatusRemoteCommand(RemoteCommand):
-    def __init__(self, remote_command, args):
+    def __init__(self, step, remote_command, args):
         RemoteCommand.__init__(self, remote_command, args)
-
-        self.rc = None
-        self.stderr = ''
-
-    def remoteUpdate(self, update):
-        #log.msg('StatusRemoteCommand: update=%r' % update)
-        if 'rc' in update:
-            self.rc = update['rc']
-        if 'stderr' in update:
-            self.stderr = self.stderr + update['stderr'] + '\n'
+        callback = lambda arg: step.step_status.addLog('stdio')
+        self.useLogDelayed('stdio', callback, True)
 
 class _TransferBuildStep(BuildStep):
     """
@@ -216,8 +209,6 @@ class _TransferBuildStep(BuildStep):
         # the rest
         if result == SKIPPED:
             return BuildStep.finished(self, SKIPPED)
-        if self.cmd.stderr != '':
-            self.addCompleteLog('stderr', self.cmd.stderr)
 
         if self.cmd.rc is None or self.cmd.rc == 0:
             return BuildStep.finished(self, SUCCESS)
@@ -228,10 +219,11 @@ class FileUpload(_TransferBuildStep):
 
     name = 'upload'
 
-    renderables = [ 'slavesrc', 'masterdest' ]
+    renderables = [ 'slavesrc', 'masterdest', 'url' ]
 
     def __init__(self, slavesrc, masterdest,
-                 workdir=None, maxsize=None, blocksize=16*1024, mode=None, keepstamp=False,
+                 workdir=None, maxsize=None, blocksize=16*1024, mode=None,
+                 keepstamp=False, url=None,
                  **buildstep_kwargs):
         BuildStep.__init__(self, **buildstep_kwargs)
         self.addFactoryArguments(slavesrc=slavesrc,
@@ -241,6 +233,7 @@ class FileUpload(_TransferBuildStep):
                                  blocksize=blocksize,
                                  mode=mode,
                                  keepstamp=keepstamp,
+                                 url=url,
                                  )
 
         self.slavesrc = slavesrc
@@ -248,9 +241,12 @@ class FileUpload(_TransferBuildStep):
         self.workdir = workdir
         self.maxsize = maxsize
         self.blocksize = blocksize
-        assert isinstance(mode, (int, type(None)))
+        if not isinstance(mode, (int, type(None))):
+            config.error(
+                'mode must be an integer or None')
         self.mode = mode
         self.keepstamp = keepstamp
+        self.url = url
 
     def start(self):
         version = self.slaveVersion("uploadFile")
@@ -270,6 +266,8 @@ class FileUpload(_TransferBuildStep):
                 % (source, masterdest))
 
         self.step_status.setText(['uploading', os.path.basename(source)])
+        if self.url is not None:
+            self.addURL(os.path.basename(masterdest), self.url)
 
         # we use maxsize to limit the amount of data on both sides
         fileWriter = _FileWriter(masterdest, self.maxsize, self.mode)
@@ -289,8 +287,12 @@ class FileUpload(_TransferBuildStep):
             'keepstamp': self.keepstamp,
             }
 
-        self.cmd = StatusRemoteCommand('uploadFile', args)
+        self.cmd = StatusRemoteCommand(self, 'uploadFile', args)
         d = self.runCommand(self.cmd)
+        @d.addErrback
+        def cancel(res):
+            fileWriter.cancel()
+            return res
         d.addCallback(self.finished).addErrback(self.failed)
 
 
@@ -298,11 +300,11 @@ class DirectoryUpload(_TransferBuildStep):
 
     name = 'upload'
 
-    renderables = [ 'slavesrc', 'masterdest' ]
+    renderables = [ 'slavesrc', 'masterdest', 'url' ]
 
     def __init__(self, slavesrc, masterdest,
                  workdir=None, maxsize=None, blocksize=16*1024,
-                 compress=None, **buildstep_kwargs):
+                 compress=None, url=None, **buildstep_kwargs):
         BuildStep.__init__(self, **buildstep_kwargs)
         self.addFactoryArguments(slavesrc=slavesrc,
                                  masterdest=masterdest,
@@ -310,6 +312,7 @@ class DirectoryUpload(_TransferBuildStep):
                                  maxsize=maxsize,
                                  blocksize=blocksize,
                                  compress=compress,
+                                 url=url,
                                  )
 
         self.slavesrc = slavesrc
@@ -317,8 +320,11 @@ class DirectoryUpload(_TransferBuildStep):
         self.workdir = workdir
         self.maxsize = maxsize
         self.blocksize = blocksize
-        assert compress in (None, 'gz', 'bz2')
+        if compress not in (None, 'gz', 'bz2'):
+            config.error(
+                "'compress' must be one of None, 'gz', or 'bz2'")
         self.compress = compress
+        self.url = url
 
     def start(self):
         version = self.slaveVersion("uploadDirectory")
@@ -338,6 +344,8 @@ class DirectoryUpload(_TransferBuildStep):
                 % (source, masterdest))
 
         self.step_status.setText(['uploading', os.path.basename(source)])
+        if self.url is not None:
+            self.addURL(os.path.basename(masterdest), self.url)
         
         # we use maxsize to limit the amount of data on both sides
         dirWriter = _DirectoryWriter(masterdest, self.maxsize, self.compress, 0600)
@@ -352,8 +360,12 @@ class DirectoryUpload(_TransferBuildStep):
             'compress': self.compress
             }
 
-        self.cmd = StatusRemoteCommand('uploadDirectory', args)
+        self.cmd = StatusRemoteCommand(self, 'uploadDirectory', args)
         d = self.runCommand(self.cmd)
+        @d.addErrback
+        def cancel(res):
+            dirWriter.cancel()
+            return res
         d.addCallback(self.finished).addErrback(self.failed)
 
     def finished(self, result):
@@ -362,8 +374,6 @@ class DirectoryUpload(_TransferBuildStep):
         # the rest
         if result == SKIPPED:
             return BuildStep.finished(self, SKIPPED)
-        if self.cmd.stderr != '':
-            self.addCompleteLog('stderr', self.cmd.stderr)
 
         if self.cmd.rc is None or self.cmd.rc == 0:
             return BuildStep.finished(self, SUCCESS)
@@ -428,7 +438,9 @@ class FileDownload(_TransferBuildStep):
         self.workdir = workdir
         self.maxsize = maxsize
         self.blocksize = blocksize
-        assert isinstance(mode, (int, type(None)))
+        if not isinstance(mode, (int, type(None))):
+            config.error(
+                'mode must be an integer or None')
         self.mode = mode
 
     def start(self):
@@ -470,7 +482,7 @@ class FileDownload(_TransferBuildStep):
             'mode': self.mode,
             }
 
-        self.cmd = StatusRemoteCommand('downloadFile', args)
+        self.cmd = StatusRemoteCommand(self, 'downloadFile', args)
         d = self.runCommand(self.cmd)
         d.addCallback(self.finished).addErrback(self.failed)
 
@@ -497,7 +509,9 @@ class StringDownload(_TransferBuildStep):
         self.workdir = workdir
         self.maxsize = maxsize
         self.blocksize = blocksize
-        assert isinstance(mode, (int, type(None)))
+        if not isinstance(mode, (int, type(None))):
+            config.error(
+                'mode must be an integer or None')
         self.mode = mode
 
     def start(self):
@@ -528,7 +542,7 @@ class StringDownload(_TransferBuildStep):
             'mode': self.mode,
             }
 
-        self.cmd = StatusRemoteCommand('downloadFile', args)
+        self.cmd = StatusRemoteCommand(self, 'downloadFile', args)
         d = self.runCommand(self.cmd)
         d.addCallback(self.finished).addErrback(self.failed)
 

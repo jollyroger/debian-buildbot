@@ -16,7 +16,7 @@
 import urllib
 from twisted.internet import defer
 from twisted.web.util import redirectTo
-from buildbot.status.web.base import HtmlResource, path_to_authfail, \
+from buildbot.status.web.base import HtmlResource, path_to_authzfail, \
     path_to_root, ActionResource
 
 class UsersActionResource(ActionResource):
@@ -31,10 +31,10 @@ class UsersActionResource(ActionResource):
         yield wfd
         res = wfd.getResult()
         if not res:
-            yield path_to_authfail(req)
+            yield path_to_authzfail(req)
             return
         # show the table
-        yield path_to_root(req) + "users/table"
+        yield path_to_root(req) + "users"
 
 # /users/$uid
 class OneUserResource(HtmlResource):
@@ -63,9 +63,9 @@ class OneUserResource(HtmlResource):
         d.addCallback(cb)
         return d
 
-# /users/table
-class UsersTableResource(HtmlResource):
-    pageTitle = "Users Table"
+# /users
+class UsersResource(HtmlResource):
+    pageTitle = "Users"
     addSlash = True
 
     def __init__(self):
@@ -81,7 +81,7 @@ class UsersTableResource(HtmlResource):
         yield wfd
         res = wfd.getResult()
         if not res:
-            yield redirectTo(path_to_authfail(req), req)
+            yield redirectTo(path_to_authzfail(req), req)
             return
 
         s = self.getStatus(req)
@@ -95,35 +95,5 @@ class UsersTableResource(HtmlResource):
         for user in users:
             user['user_link'] = req.childLink(urllib.quote(str(user['uid']), ''))
         template = req.site.buildbot_service.templates.get_template(
-                                                              "users_table.html")
-        yield template.render(**ctx)
-
-# /users
-class UsersResource(HtmlResource):
-    pageTitle = "Users"
-    addSlash = True
-
-    def __init__(self):
-        HtmlResource.__init__(self)
-        self.action = "showUsersPage"
-
-    def getChild(self, path, req):
-        if path == "table":
-            return UsersTableResource()
-
-    @defer.deferredGenerator
-    def content(self, req, ctx):
-        # check for False or True on showUsersPage, redirect immediately
-        authz = self.getAuthz(req)
-        if not authz.needAuthForm(self.action):
-            if authz.advertiseAction(self.action):
-                yield redirectTo("users/table", req)
-                return
-            else:
-                yield redirectTo(path_to_authfail(req), req)
-                return
-
-        ctx['authz'] = self.getAuthz(req)
-        ctx['table_link'] = req.childLink("table")
-        template = req.site.buildbot_service.templates.get_template("users.html")
+                                                              "users.html")
         yield template.render(**ctx)

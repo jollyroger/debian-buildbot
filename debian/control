@@ -1,16 +1,16 @@
 Source: buildbot
 Section: devel
 Priority: optional
-Maintainer: Matthias Klose <doko@debian.org>
-Uploaders: Andriy Senkovych <jolly_roger@itblog.org.ua>
-Build-Depends: debhelper (>= 7.0.50~), python-all (>= 2.6.6-3), python-twisted-core (>= 2.0), python-twisted-web, python-twisted-mail, python-jinja2 (>= 2.1), python-mock, texinfo, python-sqlalchemy, python-migrate, python-twisted-words
+Maintainer: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Uploaders: Matthias Klose <doko@debian.org>
+Build-Depends: debhelper (>= 7.0.50~), python-all (>= 2.6.6-3), python-jinja2 (>=2.1), python-sqlalchemy, python-migrate, python-mock, python-sphinx (>= 1.0.7+dfsg), python-twisted-core (>= 2.0), python-twisted-web, python-twisted-mail, python-twisted-words 
 Homepage: http://buildbot.net
-Standards-Version: 3.9.2
+Standards-Version: 3.9.3
 X-Python-Version: >= 2.5
 
 Package: buildbot
 Architecture: all
-Depends: ${python:Depends}, ${misc:Depends}, python-sqlparse, python-migrate, python-twisted-core (>= 2.0), python-twisted-words, python-twisted-web, python-jinja2 (>= 2.1), adduser, dpkg (>= 1.15.4) | install-info
+Depends: ${python:Depends}, ${misc:Depends}, ${sphinxdoc:Depends}, python-jinja2 (>=2.1), python-sqlalchemy, python-migrate, python-twisted-core (>= 2.0), python-twisted-web, python-twisted-words, adduser, dpkg (>= 1.15.4)
 Recommends: buildbot-slave, python-twisted-mail
 Suggests: bzr | subversion | cvs | mercurial | darcs | git-core
 Description: system to automate the compile/test cycle

@@ -19,10 +19,9 @@ from email.Utils import formatdate
 from twisted.python import log
 from twisted.internet import defer
 from zope.interface import implements
-from buildbot.process.buildstep import LoggingBuildStep, LoggedRemoteCommand
+from buildbot.process.buildstep import LoggingBuildStep, RemoteCommand
 from buildbot.interfaces import BuildSlaveTooOldError, IRenderable
 from buildbot.status.builder import SKIPPED
-from buildbot.status.results import FAILURE
 
 class _ComputeRepositoryURL(object):
     implements(IRenderable)
@@ -63,7 +62,7 @@ class Source(LoggingBuildStep):
     Each version control system has a specialized subclass, and is expected
     to override __init__ and implement computeSourceRevision() and
     startVC(). The class as a whole builds up the self.args dictionary, then
-    starts a LoggedRemoteCommand with those arguments.
+    starts a RemoteCommand with those arguments.
     """
 
     renderables = [ 'workdir', 'description', 'descriptionDone' ]
@@ -243,6 +242,10 @@ class Source(LoggingBuildStep):
         self.checkoutDelay value."""
         return None
 
+    def getRepository(self):
+        """ Identify the unique repository for this step """
+        return None
+
     def start(self):
         if self.notReally:
             log.msg("faking %s checkout/update" % self.name)
@@ -255,29 +258,33 @@ class Source(LoggingBuildStep):
         # Allow workdir to be WithProperties
         self.args['workdir'] = self.workdir
 
-        # what source stamp would this build like to use?
-        s = self.build.getSourceStamp()
-        # if branch is None, then use the Step's "default" branch
-        branch = s.branch or self.branch
-        # if revision is None, use the latest sources (-rHEAD)
-        revision = s.revision
-        if not revision and not self.alwaysUseLatest:
-            revision = self.computeSourceRevision(s.changes)
-            # the revision property is currently None, so set it to something
-            # more interesting
-            if revision is not None:
-                self.setProperty('revision', str(revision), "Source")
+        if not self.alwaysUseLatest:
+            # what source stamp would this build like to use?
+            id = self.getRepository()
+            s = self.build.getSourceStamp(id)
 
-        # if patch is None, then do not patch the tree after checkout
+            # if branch is None, then use the Step's "default" branch
+            branch = s.branch or self.branch
+            # if revision is None, use the latest sources (-rHEAD)
+            revision = s.revision
+            if not revision:
+                revision = self.computeSourceRevision(s.changes)
+                # the revision property is currently None, so set it to something
+                # more interesting
+                if revision is not None:
+                    self.setProperty('revision', str(revision), "Source")
 
-        # 'patch' is None or a tuple of (patchlevel, diff, root)
-        # root is optional.
-        patch = s.patch
-        if patch:
-            self.addCompleteLog("patch", patch[1])
+            # if patch is None, then do not patch the tree after checkout
 
-        if self.alwaysUseLatest:
+            # 'patch' is None or a tuple of (patchlevel, diff, root)
+            # root is optional.
+            patch = s.patch
+            if patch:
+                self.addCompleteLog("patch", patch[1])
+        else:
             revision = None
+            branch = self.branch
+            patch = None
 
         self.args['logEnviron'] = self.logEnviron
         self.args['env'] = self.env
@@ -358,7 +365,7 @@ class BK(Source):
         self.description.extend(revstuff)
         self.descriptionDone.extend(revstuff)
 
-        cmd = LoggedRemoteCommand("bk", self.args)
+        cmd = RemoteCommand("bk", self.args)
         self.startCommand(cmd, warnings)
 
 
@@ -551,7 +558,7 @@ class CVS(Source):
             self.args['tag'] = self.args['branch']
             assert not self.args['patch'] # 0.5.0 slave can't do patch
 
-        cmd = LoggedRemoteCommand("cvs", self.args)
+        cmd = RemoteCommand("cvs", self.args)
         self.startCommand(cmd, warnings)
 
 
@@ -723,7 +730,7 @@ class SVN(Source):
         self.description.extend(revstuff)
         self.descriptionDone.extend(revstuff)
 
-        cmd = LoggedRemoteCommand("svn", self.args)
+        cmd = RemoteCommand("svn", self.args)
         self.startCommand(cmd, warnings)
 
 
@@ -817,7 +824,7 @@ class Darcs(Source):
         self.description.extend(revstuff)
         self.descriptionDone.extend(revstuff)
 
-        cmd = LoggedRemoteCommand("darcs", self.args)
+        cmd = RemoteCommand("darcs", self.args)
         self.startCommand(cmd)
 
 
@@ -910,7 +917,7 @@ class Git(Source):
         if not slavever:
             raise BuildSlaveTooOldError("slave is too old, does not know "
                                         "about git")
-        cmd = LoggedRemoteCommand("git", self.args)
+        cmd = RemoteCommand("git", self.args)
         self.startCommand(cmd)
 
 
@@ -948,6 +955,7 @@ class Repo(Source):
         self.args.update({'manifest_branch': manifest_branch,
                           'manifest_file': manifest_file,
                           'tarball': tarball,
+                          'manifest_override_url': None
                           })
 
     def computeSourceRevision(self, changes):
@@ -1011,28 +1019,36 @@ class Repo(Source):
     def startVC(self, branch, revision, patch):
         self.args['manifest_url'] = self.manifest_url
 
+        # manifest override
+        self.args['manifest_override_url'] = None
+        try:
+            self.args['manifest_override_url'] = self.build.getProperty("manifest_override_url")
+        except KeyError:
+            pass
         # only master has access to properties, so we must implement this here.
         d = self.buildDownloadList()
         d.addCallback(self.continueStartVC, branch, revision, patch)
-        d.addErrback(self.failedStartVC)
+        d.addErrback(self.failed)
 
     def continueStartVC(self, ignored, branch, revision, patch):
         slavever = self.slaveVersion("repo")
         if not slavever:
             raise BuildSlaveTooOldError("slave is too old, does not know "
                                         "about repo")
-        cmd = LoggedRemoteCommand("repo", self.args)
+        cmd = RemoteCommand("repo", self.args)
         self.startCommand(cmd)
 
-    def failedStartVC(self, failure):
-        self.interrupt("unable to build download list"+str(failure))
-        self.finished(FAILURE)
-
     def commandComplete(self, cmd):
+        repo_downloaded = []
         if cmd.updates.has_key("repo_downloaded"):
             repo_downloaded = cmd.updates["repo_downloaded"][-1]
             if repo_downloaded:
                 self.setProperty("repo_downloaded", str(repo_downloaded), "Source")
+            else:
+                repo_downloaded = []
+        orig_downloads = self.getProperty("repo_downloads") or []
+        if len(orig_downloads) != len(repo_downloaded):
+            self.step_status.setText(["repo download issues"])
 
 
 class Bzr(Source):
@@ -1117,7 +1133,7 @@ class Bzr(Source):
         self.description.extend(revstuff)
         self.descriptionDone.extend(revstuff)
 
-        cmd = LoggedRemoteCommand("bzr", self.args)
+        cmd = RemoteCommand("bzr", self.args)
         self.startCommand(cmd)
 
 
@@ -1204,7 +1220,7 @@ class Mercurial(Source):
         self.description.extend(revstuff)
         self.descriptionDone.extend(revstuff)
 
-        cmd = LoggedRemoteCommand("hg", self.args)
+        cmd = RemoteCommand("hg", self.args)
         self.startCommand(cmd)
 
     def computeSourceRevision(self, changes):
@@ -1303,7 +1319,7 @@ class P4(Source):
         args['branch'] = branch or self.branch
         args['revision'] = revision
         args['patch'] = patch
-        cmd = LoggedRemoteCommand("p4", args)
+        cmd = RemoteCommand("p4", args)
         self.startCommand(cmd)
 
 class P4Sync(Source):
@@ -1352,7 +1368,7 @@ class P4Sync(Source):
     def startVC(self, branch, revision, patch):
         slavever = self.slaveVersion("p4sync")
         assert slavever, "slave is too old, does not know about p4"
-        cmd = LoggedRemoteCommand("p4sync", self.args)
+        cmd = RemoteCommand("p4sync", self.args)
         self.startCommand(cmd)
 
 
@@ -1404,7 +1420,7 @@ class Monotone(Source):
         self.args['revision'] = revision
         self.args['patch'] = patch
 
-        cmd = LoggedRemoteCommand("mtn", self.args)
+        cmd = RemoteCommand("mtn", self.args)
         self.startCommand(cmd)
 
     def computeSourceRevision(self, changes):

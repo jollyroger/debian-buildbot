@@ -3,7 +3,9 @@ Global Configuration
 
 The keys in this section affect the operations of the buildmaster globally.
 
+.. bb:cfg:: db
 .. bb:cfg:: db_url
+.. bb:cfg:: db_poll_interval
 
 .. _Database-Specification:
 
@@ -13,13 +15,31 @@ Database Specification
 Buildbot requires a connection to a database to maintain certain state
 information, such as tracking pending build requests.  By default this is
 stored in a sqlite file called :file:`state.sqlite` in the base directory of your
-master.  This can be overridden with the ``db_url`` parameter.
+master.  This can be overridden with the :bb:cfg:`db_url` parameter.
 
-The format of this parameter is completely documented at
-http://www.sqlalchemy.org/docs/dialects/, but is generally of the form
-``driver://[username:password@]host:port/database[?args]``.
+The database configuration is specified as a dictionary named ``db``, where all
+keys are optional::
 
-Notes for particular database backends:
+    c['db'] = {
+        'db_url' : 'sqlite:///state.sqlite',
+        'db_poll_interval' : 30,
+    }
+
+The ``db_url`` key indicates the database engine to use.  The format of this
+parameter is completely documented at http://www.sqlalchemy.org/docs/dialects/,
+but is generally of the form ::
+
+    driver://[username:password@]host:port/database[?args]
+
+The optional ``db_poll_interval`` specifies the interval, in seconds, between
+checks for pending tasks in the database.  This parameter is generally only
+usful in multi-master mode - see :ref:`Multi-master-mode`.
+
+These parameters can be specified directly in the configuration dictionary, as
+``c['db_url']`` and ``c['db_poll_interval']``, although this method is
+deprecated.
+
+The following sections give additional information for particular database backends:
 
 .. index:: SQLite
 
@@ -86,12 +106,11 @@ Postgres
 
 .. code-block:: python
 
-    c['db_url'] = "postgresql://username@@hostname/dbname"
+    c['db_url'] = "postgresql://username@hostname/dbname"
 
 No special configuration is required to use Postgres.
 
 .. bb:cfg:: multiMaster
-.. bb:cfg:: db_poll_interval
 
 .. _Multi-master-mode:
 
@@ -138,15 +157,20 @@ the scheduler and change sources; and then other masters configured with just
 the builders.
 
 To enable multi-master mode in this configuration, you will need to set the
-``multiMaster`` option so that buildbot doesn't warn about missing schedulers or
-builders. You will also need to set ``db_poll_interval`` to the masters with only
-builders check the database for new build requests at the configured interval. ::
+:bb:cfg:`multiMaster` option so that buildbot doesn't warn about missing schedulers
+or builders. You will also need to set :bb:cfg:`db_poll_interval` to specify
+the interval (in seconds) at which masters should poll the database for tasks.
+
+::
 
     # Enable multiMaster mode; disables warnings about unknown builders and
     # schedulers
     c['multiMaster'] = True
     # Check for new build requests every 60 seconds
-    c['db_poll_interval'] = 60
+    c['db'] = {
+        'db_url' : 'mysql://...',
+        'db_poll_interval' : 30,
+    }
 
 .. bb:cfg:: buildbotURL
 .. bb:cfg:: titleURL
@@ -250,18 +274,20 @@ The :bb:cfg:`changeHorizon` key determines how many changes the master will
 keep a record of. One place these changes are displayed is on the waterfall
 page.  This parameter defaults to 0, which means keep all changes indefinitely.
 
-The :bb:cfg:`buildHorizon` specifies the minimum number of builds for each builder
-which should be kept on disk.  The :bb:cfg:`eventHorizon` specifies the minumum
-number of events to keep -- events mostly describe connections and
+The :bb:cfg:`buildHorizon` specifies the minimum number of builds for each
+builder which should be kept on disk.  The :bb:cfg:`eventHorizon` specifies the
+minumum number of events to keep -- events mostly describe connections and
 disconnections of slaves, and are seldom helpful to developers.  The
-:bb:cfg:`logHorizon` gives the minimum number of builds for which logs should be
-maintained; this parameter must be less than :bb:cfg:`buildHorizon`. Builds older
-than :bb:cfg:`logHorizon` but not older than :bb:cfg:`buildHorizon` will maintain
-their overall status and the status of each step, but the logfiles will be
-deleted.
+:bb:cfg:`logHorizon` gives the minimum number of builds for which logs should
+be maintained; this parameter must be less than or equal to
+:bb:cfg:`buildHorizon`. Builds older than :bb:cfg:`logHorizon` but not older
+than :bb:cfg:`buildHorizon` will maintain their overall status and the status
+of each step, but the logfiles will be deleted.
 
 .. bb:cfg:: caches
 .. bb:cfg:: changeCacheSize
+.. bb:cfg:: buildCacheSize
+
 
 Caches
 ++++++
@@ -269,7 +295,8 @@ Caches
 ::
 
     c['caches'] = {
-        'Changes' : 100,     # a.k.a. c['changeCacheSize']
+        'Changes' : 100,     # formerly c['changeCacheSize']
+        'Builds' : 500,      # formerly c['buildCacheSize']
         'chdicts' : 100,
         'BuildRequests' : 10,
         'SourceStamps' : 20,
@@ -277,15 +304,16 @@ Caches
         'objectids' : 10,
         'usdicts' : 100,
     }
-    c['buildCacheSize'] = 500
 
 The :bb:cfg:`caches` configuration key contains the configuration for Buildbot's
 in-memory caches.  These caches keep frequently-used objects in memory to avoid
 unnecessary trips to the database or to pickle files.  Caches are divided by
-object type, and each has a configurable maximum size.  The default size for
-each cache is 1, which allows Buildbot to make a number of optimizations
-without consuming much memory.  Larger, busier installations will likely want
-to increase these values.
+object type, and each has a configurable maximum size.
+
+The default size for each cache is 1, except where noted below.  A value of 1
+allows Buildbot to make a number of optimizations without consuming much
+memory.  Larger, busier installations will likely want to increase these
+values.
 
 The available caches are:
 
@@ -298,7 +326,16 @@ The available caches are:
     something like 10000 isn't unreasonable.
 
     This parameter is the same as the deprecated global parameter
-    :bb:cfg:`changeCacheSize`.
+    :bb:cfg:`changeCacheSize`.  Its default value is 10.
+
+``Builds``
+    The :bb:cfg:`buildCacheSize` parameter gives the number of builds for each
+    builder which are cached in memory.  This number should be larger than the
+    number of builds required for commonly-used status displays (the waterfall
+    or grid views), so that those displays do not miss the cache on a refresh.
+
+    This parameter is the same as the deprecated global parameter
+    :bb:cfg:`buildCacheSize`.  Its default value is 15.
 
 ``chdicts``
     The number of rows from the ``changes`` table to cache in memory.  This
@@ -328,14 +365,6 @@ The available caches are:
     The number of rows from the ``users`` table to cache in memory.  Note that for
     a given user there will be a row for each attribute that user has.
 
-.. bb:cfg:: buildCacheSize
-
-The :bb:cfg:`buildCacheSize` parameter gives the number of builds
-for each builder which are cached in memory.  This number should be larger than
-the number of builds required for commonly-used status displays (the waterfall
-or grid views), so that those displays do not miss the cache on a
-refresh. ::
-
     c['buildCacheSize'] = 15
 
 .. bb:cfg:: mergeRequests
@@ -347,7 +376,7 @@ Merging Build Requests
 
 ::
 
-    c['mergeRequests'] = False
+    c['mergeRequests'] = True
 
 This is a global default value for builders' :bb:cfg:`mergeRequests` parameter,
 and controls the merging of build requests.  This parameter can be overridden
@@ -583,7 +612,7 @@ of the metrics subsystem. If :bb:cfg:`metrics` is ``None``, then metrics
 collection, logging and reporting will be disabled. 
 
 ``log_interval`` determines how often metrics should be logged to
-twistd.log. It default to 60s. If set to 0 or ``None``, then logging of
+twistd.log. It defaults to 60s. If set to 0 or ``None``, then logging of
 metrics will be disabled. This value can be changed via a reconfig. 
 
 ``periodic_interval`` determines how often various non-event based
@@ -657,5 +686,45 @@ untrusted users may raise security concerns.
 The keys describe the type of input validated; the values are compiled regular
 expressions against which the input will be matched.  The defaults for each
 type of input are those given in the example, above.
+
+.. bb:cfg:: revlink
+
+Revision Links
+~~~~~~~~~~~~~~
+
+The :bb:cfg:`revlink` parameter is used to create links from revision IDs in
+the web status to a web-view of your source control system. The parameter's
+value must be a callable.
+
+By default, Buildbot is configured to generate revlinks for a number of open
+source hosting platforms.
+
+The callable takes the revision id and repository argument, and should return
+an URL to the revision.  Note that the revision id may not always be in the
+form you expect, so code defensively.  In particular, a revision of "??" may be
+supplied when no other information is available.
+
+Note that :class:`SourceStamp`\s that are not created from version-control changes (e.g.,
+those created by a Nightly or Periodic scheduler) will have an empty repository
+string, as the respository is not known.
+
+Revision Link Helpers
++++++++++++++++++++++
+
+Buildbot provides two helpers for generating revision links.
+:class:`buildbot.revlinks.RevlinkMatcher` takes a list of regular expressions,
+and replacement text. The regular expressions should all have the same number
+of capture groups. The replacement text should have sed-style references to
+that capture groups (i.e. '\1' for the first capture group), and a single '%s'
+reference, for the revision ID. The repository given is tried against each
+regular expression in turn. The results are the substituted into the
+replacement text, along with the revision ID to obtain the revision link. ::
+
+        from buildbot import revlinks
+        c['revlink'] = revlinks.RevlinkMatch([r'git://notmuchmail.org/git/\(.*\)']
+                                                r'http://git.notmuchmail.org/git/\1/commit/%s')
+
+:class:`buildbot.revlinks.RevlinkMultiplexer` takes a list of revision link
+callables, and tries each in turn, returning the first successful match.
 
 .. _TwistedConch: http://twistedmatrix.com/trac/wiki/TwistedConch

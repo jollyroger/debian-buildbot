@@ -4,8 +4,6 @@ set -e
 
 USER_DESCR="Buildbot system user"
 MASTERS_DIR=~buildbot/masters
-PACKAGE=
-STATE=
 
 case "$1" in
     upgrade|failed-upgrade|abort-install|abort-upgrade|disappear|remove)

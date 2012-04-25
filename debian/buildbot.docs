@@ -1,5 +1,4 @@
-NEWS
 README
 UPGRADING
 CREDITS
-docs/buildbot.html
+docs/_build/html

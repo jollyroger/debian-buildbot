@@ -70,6 +70,7 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
     changes = ()
     project = ''
     repository = ''
+    sourcestampsetid = None
     ssid = None
 
     compare_attrs = ('branch', 'revision', 'patch', 'patch_info', 'changes', 'project', 'repository')
@@ -100,12 +101,12 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         sourcestamp.revision = ssdict['revision']
         sourcestamp.project = ssdict['project']
         sourcestamp.repository = ssdict['repository']
+        sourcestamp.sourcestampsetid = ssdict['sourcestampsetid']
 
         sourcestamp.patch = None
         if ssdict['patch_body']:
-            # note that this class does not store the patch_subdir
-            sourcestamp.patch = (ssdict['patch_level'],
-                                 ssdict['patch_body'])
+            sourcestamp.patch = (ssdict['patch_level'], ssdict['patch_body'],
+                ssdict.get('patch_subdir'))
             sourcestamp.patch_info = (ssdict['patch_author'],
                                       ssdict['patch_comment'])
         
@@ -130,22 +131,23 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
     def __init__(self, branch=None, revision=None, patch=None,
                  patch_info=None, changes=None, project='', repository='',
                  _fromSsdict=False, _ignoreChanges=False):
-        self._getSourceStampId_lock = defer.DeferredLock();
+        self._getSourceStampSetId_lock = defer.DeferredLock();
 
         # skip all this madness if we're being built from the database
         if _fromSsdict:
             return
 
         if patch is not None:
-            assert len(patch) == 2
+            assert 2 <= len(patch) <= 3
             assert int(patch[0]) != -1
         self.branch = branch
         self.patch = patch
         self.patch_info = patch_info
         self.project = project or ''
         self.repository = repository or ''
-        if changes and not _ignoreChanges:
+        if changes:
             self.changes = tuple(changes)
+        if changes and not _ignoreChanges:
             # set branch and revision to most recent change
             self.branch = changes[-1].branch
             revision = changes[-1].revision
@@ -170,6 +172,8 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
             return False # the builds are completely unrelated
         if other.project != self.project:
             return False
+        if self.patch or other.patch:
+            return False # you can't merge patched builds with anything
 
         if self.changes and other.changes:
             return True
@@ -178,8 +182,6 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         elif not self.changes and other.changes:
             return False # they're using changes, we aren't
 
-        if self.patch or other.patch:
-            return False # you can't merge patched builds with anything
         if self.revision == other.revision:
             # both builds are using the same specific revision, so they can
             # be merged. It might be the case that revision==None, so they're
@@ -245,7 +247,7 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
 
     def __setstate__(self, d):
         styles.Versioned.__setstate__(self, d)
-        self._getSourceStampId_lock = defer.DeferredLock();
+        self._getSourceStampSetId_lock = defer.DeferredLock();
 
     def upgradeToVersion1(self):
         # version 0 was untyped; in version 1 and later, types matter.
@@ -263,30 +265,54 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         self.repository = ''
         self.wasUpgraded = True
 
-    @util.deferredLocked('_getSourceStampId_lock')
-    def getSourceStampId(self, master):
+    @util.deferredLocked('_getSourceStampSetId_lock')
+    def getSourceStampSetId(self, master):
         "temporary; do not use widely!"
-        if self.ssid:
-            return defer.succeed(self.ssid)
+        if self.sourcestampsetid:
+            return defer.succeed(self.sourcestampsetid)
         # add it to the DB
         patch_body = None
         patch_level = None
+        patch_subdir = None
         if self.patch:
-            patch_level, patch_body = self.patch
+            patch_level = self.patch[0]
+            patch_body = self.patch[1]
+            if len(self.patch) > 2:
+              patch_subdir = self.patch[2]
             
         patch_author = None
         patch_comment = None
         if self.patch_info:
             patch_author, patch_comment = self.patch_info
+
+        def get_setid():
+            if self.sourcestampsetid != None:
+                return defer.succeed( self.sourcestampsetid )
+            else:
+                return master.db.sourcestampsets.addSourceStampSet()
+            return d
             
-        d = master.db.sourcestamps.addSourceStamp(
+        def set_setid(setid):
+            self.sourcestampsetid = setid
+            return setid
+
+        def add_sourcestamp(setid):
+            return master.db.sourcestamps.addSourceStamp(
+                sourcestampsetid=setid,
                 branch=self.branch, revision=self.revision,
                 repository=self.repository, project=self.project,
                 patch_body=patch_body, patch_level=patch_level,
                 patch_author=patch_author, patch_comment=patch_comment,
-                patch_subdir=None, changeids=[c.number for c in self.changes])
+                patch_subdir=patch_subdir,
+                changeids=[c.number for c in self.changes])
+
         def set_ssid(ssid):
             self.ssid = ssid
             return ssid
+
+        d = get_setid()
+        d.addCallback(set_setid)
+        d.addCallback(add_sourcestamp)
         d.addCallback(set_ssid)
+        d.addCallback(lambda _ : self.sourcestampsetid)
         return d

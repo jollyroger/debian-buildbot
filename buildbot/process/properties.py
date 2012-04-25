@@ -312,12 +312,16 @@ class Property(util.ComparableMixin):
 
     def getRenderingFor(self, props):
         if self.defaultWhenFalse:
-            return props.getProperty(self.key) or self.default
+            rv = props.getProperty(self.key)
+            if rv:
+                return rv
         else:
-            return props.getProperty(self.key, default=self.default)
+            if props.hasProperty(self.key):
+                return props.getProperty(self.key)
 
+        return props.render(self.default)
 
-class _DefaultRenderer:
+class _DefaultRenderer(object):
     """
     Default IRenderable adaptor. Calls .getRenderingFor if availble, otherwise
     returns argument unchanged.
@@ -337,7 +341,7 @@ class _DefaultRenderer:
 registerAdapter(_DefaultRenderer, object, IRenderable)
 
 
-class _ListRenderer:
+class _ListRenderer(object):
     """
     List IRenderable adaptor. Maps Build.render over the list.
     """
@@ -353,7 +357,7 @@ class _ListRenderer:
 registerAdapter(_ListRenderer, list, IRenderable)
 
 
-class _TupleRenderer:
+class _TupleRenderer(object):
     """
     Tuple IRenderable adaptor. Maps Build.render over the tuple.
     """
@@ -369,7 +373,7 @@ class _TupleRenderer:
 registerAdapter(_TupleRenderer, tuple, IRenderable)
 
 
-class _DictRenderer:
+class _DictRenderer(object):
     """
     Dict IRenderable adaptor. Maps Build.render over the keya and values in the dict.
     """

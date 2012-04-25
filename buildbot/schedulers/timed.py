@@ -18,6 +18,7 @@ from buildbot import util
 from buildbot.schedulers import base
 from twisted.internet import defer, reactor
 from twisted.python import log
+from buildbot import config
 from buildbot.changes import filter
 
 class Timed(base.BaseScheduler):
@@ -210,7 +211,9 @@ class Periodic(Timed):
             branch=None, properties={}, onlyImportant=False):
         Timed.__init__(self, name=name, builderNames=builderNames,
                     properties=properties)
-        assert periodicBuildTimer > 0, "periodicBuildTimer must be positive"
+        if periodicBuildTimer <= 0:
+            config.error(
+                "periodicBuildTimer must be positive")
         self.periodicBuildTimer = periodicBuildTimer
         self.branch = branch
         self.reason = "The Periodic scheduler named '%s' triggered this build" % self.name
@@ -228,7 +231,7 @@ class Nightly(Timed):
     compare_attrs = (Timed.compare_attrs
             + ('minute', 'hour', 'dayOfMonth', 'month',
                'dayOfWeek', 'onlyIfChanged', 'fileIsImportant',
-               'change_filter', 'onlyImportant',))
+               'change_filter', 'onlyImportant', 'branch'))
 
     class NoBranch: pass
     def __init__(self, name, builderNames, minute=0, hour='*',
@@ -240,11 +243,12 @@ class Nightly(Timed):
         # If True, only important changes will be added to the buildset.
         self.onlyImportant = onlyImportant
 
-        if fileIsImportant:
-            assert callable(fileIsImportant), \
-                "fileIsImportant must be a callable"
-        assert branch is not Nightly.NoBranch, \
-                "Nightly parameter 'branch' is required"
+        if fileIsImportant and not callable(fileIsImportant):
+            config.error(
+                "fileIsImportant must be a callable")
+        if branch is Nightly.NoBranch:
+            config.error(
+                "Nightly parameter 'branch' is required")
 
         self.minute = minute
         self.hour = hour
@@ -264,7 +268,7 @@ class Nightly(Timed):
                                               change_filter=self.change_filter,
                                               onlyImportant=self.onlyImportant)
         else:
-            return self.master.db.schedulers.flushChangeClassifications(self.schedulerid)
+            return self.master.db.schedulers.flushChangeClassifications(self.objectid)
 
     def gotChange(self, change, important):
         # both important and unimportant changes on our branch are recorded, as
@@ -274,7 +278,7 @@ class Nightly(Timed):
         if change.branch != self.branch:
             return defer.succeed(None) # don't care about this change
         return self.master.db.schedulers.classifyChanges(
-                self.schedulerid, { change.number : important })
+                self.objectid, { change.number : important })
 
     def getNextBuildTime(self, lastActuated):
         def addTime(timetuple, secs):
@@ -332,7 +336,7 @@ class Nightly(Timed):
         # if onlyIfChanged is True, then we will skip this build if no
         # important changes have occurred since the last invocation
         if self.onlyIfChanged:
-            wfd = defer.waitForDeferred(scheds.getChangeClassifications(self.schedulerid))
+            wfd = defer.waitForDeferred(scheds.getChangeClassifications(self.objectid))
             yield wfd
             classifications = wfd.getResult()
 
@@ -353,7 +357,7 @@ class Nightly(Timed):
 
             max_changeid = changeids[-1] # (changeids are sorted)
             wfd = defer.waitForDeferred(
-                    scheds.flushChangeClassifications(self.schedulerid,
+                    scheds.flushChangeClassifications(self.objectid,
                                                       less_than=max_changeid+1))
             yield wfd
             wfd.getResult()

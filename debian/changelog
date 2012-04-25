@@ -1,9 +1,28 @@
+buildbot (0.8.6p1-1) unstable; urgency=low
+
+  * New upstream release (Closes: #669474).
+  * Re-enable documentation building.
+  * Use sphinx-generated documentation with dh_sphinxdoc.
+  * Remove deb-bug-647420.patch (fixed upstream).
+  * debian/control:
+    - bump Standards-Version to 3.9.3
+    - move Matthias Klose to Uploaders
+    - move Andriy Senkovych to Maintainer
+  * debian/rules: 
+    - do not byte-compile *.py files in /usr/share/buildbot
+    - remove additional files (docs/docs.tgz) in clean target
+  * debian/copyright: 
+    - correct syntax for common license (GPL-2)
+    - update Format line to point to copyright-format 1.0
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Thu, 26 Apr 2012 00:02:36 +0300
+
 buildbot (0.8.5-2) unstable; urgency=low
 
   * Remove buildmaster-use-MASTER_PREFIXCMD.patch as fixed upstream.
   * Cherry-pick deb-bug-647420.patch from upstream (Closes: #647420). Thanks
     to Brice Goglin.
-  * Add Depends: python-sqlalchemy, phyton-migrate, python-twisted-web
+  * Add Depends: python-sqlalchemy, python-migrate, python-twisted-web
     (Closes: #660389). Thanks to Tobias Frost.
   * postrm: 
     - do not remove system user on purge (Refs: #621833, closes: #656536)

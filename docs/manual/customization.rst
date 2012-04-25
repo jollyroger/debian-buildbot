@@ -448,15 +448,15 @@ achive workdir-per-repo::
         def workdir(source_stamp):
             return hashlib.md5 (source_stamp.repository).hexdigest()[:8]
 
-        build = factory.BuildFactory()
-        build.workdir = workdir
+        build_factory = factory.BuildFactory()
+        build_factory.workdir = workdir
 
-        build.addStep(Git(mode="update"))
+        build_factory.addStep(Git(mode="update"))
         # ...
         builders.append ({'name': 'mybuilder',
                           'slavename': 'myslave',
                           'builddir': 'mybuilder',
-                          'factory': build})
+                          'factory': build_factory})
 
 The end result is a set of workdirs like
 
@@ -636,7 +636,7 @@ To spawn a command in the buildslave, create a
 ``start`` method and run it with
 :meth:`~buildbot.process.buildstep.BuildStep.runCommand`::
 
-    cmd = LoggedRemoteCommand(args)
+    cmd = RemoteCommand(args)
     d = self.runCommand(cmd)
 
 To add a LogFile, use :meth:`~buildbot.process.buildstep.BuildStep.addLog`.
@@ -1104,7 +1104,7 @@ Find out what your python's standard include path is by asking it:
 
 .. code-block:: none
 
-    80:warner@@luther% python
+    80:warner@luther% python
     Python 2.4.4c0 (#2, Oct  2 2006, 00:57:46)
     [GCC 4.1.2 20060928 (prerelease) (Debian 4.1.1-15)] on linux2
     Type "help", "copyright", "credits" or "license" for more information.

@@ -88,7 +88,7 @@ class Bzr(Source):
                 command = ['checkout', self.repourl, '.']
 
             if self.revision:
-                command.append(['-r', self.revision])
+                command.extend(['-r', self.revision])
             return command
 
         d.addCallback(_cmd)
@@ -126,8 +126,8 @@ class Bzr(Source):
         wfd.getResult()
 
     def clobber(self):
-        cmd = buildstep.LoggedRemoteCommand('rmdir', {'dir': self.workdir,
-                                                      'logEnviron': self.logEnviron,})
+        cmd = buildstep.RemoteCommand('rmdir', {'dir': self.workdir,
+                                                'logEnviron': self.logEnviron,})
         cmd.useLog(self.stdio_log, False)
         d = self.runCommand(cmd)
         def checkRemoval(res):
@@ -139,16 +139,16 @@ class Bzr(Source):
         return d
 
     def copy(self):
-        cmd = buildstep.LoggedRemoteCommand('rmdir', {'dir': 'build',
-                                                      'logEnviron': self.logEnviron,})
+        cmd = buildstep.RemoteCommand('rmdir', {'dir': 'build',
+                                                'logEnviron': self.logEnviron,})
         cmd.useLog(self.stdio_log, False)
         d = self.runCommand(cmd)
         d.addCallback(lambda _: self.incremental())
         def copy(_):
-            cmd = buildstep.LoggedRemoteCommand('cpdir',
-                                                {'fromdir': 'source',
-                                                 'todir':'build',
-                                                 'logEnviron': self.logEnviron,})
+            cmd = buildstep.RemoteCommand('cpdir',
+                                          {'fromdir': 'source',
+                                           'todir':'build',
+                                           'logEnviron': self.logEnviron,})
             cmd.useLog(self.stdio_log, False)
             d = self.runCommand(cmd)
             return d
@@ -159,7 +159,7 @@ class Bzr(Source):
         d = self._dovccmd(['clean-tree', '--ignored', '--force'])
         command = ['update']
         if self.revision:
-            command.append(['-r', self.revision])
+            command.extend(['-r', self.revision])
         d.addCallback(lambda _: self._dovccmd(command))
         return d
 
@@ -167,14 +167,14 @@ class Bzr(Source):
         d = self._dovccmd(['clean-tree', '--force'])
         command = ['update']
         if self.revision:
-            command.append(['-r', self.revision])
+            command.extend(['-r', self.revision])
         d.addCallback(lambda _: self._dovccmd(command))
         return d
 
     def _doFull(self):
         command = ['checkout', self.repourl, '.']
         if self.revision:
-            command.append(['-r', self.revision])
+            command.extend(['-r', self.revision])
         d = self._dovccmd(command)
         return d
 
@@ -190,8 +190,8 @@ class Bzr(Source):
         return d
 
     def _sourcedirIsUpdatable(self):
-        cmd = buildstep.LoggedRemoteCommand('stat', {'file': self.workdir + '/.bzr',
-                                                     'logEnviron': self.logEnviron,})
+        cmd = buildstep.RemoteCommand('stat', {'file': self.workdir + '/.bzr',
+                                               'logEnviron': self.logEnviron,})
         cmd.useLog(self.stdio_log, False)
         d = self.runCommand(cmd)
         def _fail(tmp):

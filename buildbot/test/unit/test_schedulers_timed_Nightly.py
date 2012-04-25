@@ -21,14 +21,15 @@ from twisted.python import log
 from buildbot.schedulers import timed
 from buildbot.test.util import scheduler
 from buildbot.changes import filter
+from buildbot import config
 
 class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
 
-    SCHEDULERID = 132
+    OBJECTID = 132
 
     def makeScheduler(self, firstBuildDuration=0, **kwargs):
         sched = self.attachScheduler(timed.Nightly(**kwargs),
-                self.SCHEDULERID)
+                self.OBJECTID)
 
         # add a Clock to help checking timing issues
         self.clock = sched._reactor = task.Clock()
@@ -80,7 +81,7 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
         assert sched.change_filter
 
     def test_constructor_no_branch(self):
-        self.assertRaises(AssertionError,
+        self.assertRaises(config.ConfigErrors,
             lambda : self.makeScheduler(name='test', builderNames=['test'],
                 change_filter=filter.ChangeFilter(category_re="fo+o")))
 
@@ -256,14 +257,14 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
                         minute=[10, 20, 21, 40, 50, 51])
 
         # add a change classification
-        self.db.schedulers.fakeClassifications(self.SCHEDULERID,
+        self.db.schedulers.fakeClassifications(self.OBJECTID,
                                                             { 19 : True })
 
         sched.startService()
 
         # check that the classification has been flushed, since this
         # invocation has not requested onlyIfChanged
-        self.db.schedulers.assertClassifications(self.SCHEDULERID, {})
+        self.db.schedulers.assertClassifications(self.OBJECTID, {})
 
         self.clock.advance(0) # let it get set up
         while self.clock.seconds() < 30*60: # run for 30 minutes

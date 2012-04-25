@@ -1,21 +1,20 @@
 #!/usr/bin/make -f
 
 DESTDIR = debian/buildbot
-DOCDIR = /usr/share/doc/buildbot
 export VERSION = $(shell head -n1 debian/changelog | cut -d' ' -f2 | tr -d '()')
 
 %:
-	dh $@ --with python2
+	dh $@ --with python2 --with sphinxdoc --buildsystem python_distutils
 
 make_docs:
-	$(MAKE) -C docs buildbot.info buildbot.html
+	$(MAKE) -C docs
 
-override_dh_auto_build: #make_docs
+override_dh_auto_build: make_docs
 	dh_auto_build
 
 override_dh_auto_clean:
-	rm -fR buildbot.egg-info _trial_temp
-	rm -f docs/buildbot.info* docs/buildbot.html
+	rm -fR buildbot.egg-info _trial_temp docs/docs.tgz
+	$(MAKE) -C docs clean
 	dh_auto_clean
 
 override_dh_auto_test:
@@ -25,14 +24,20 @@ else
 	python setup.py test
 endif
 
+override_dh_python2:
+	dh_python2 $@ --skip-private
+
 override_dh_installinit:
 	mkdir -p ${DESTDIR}/etc/init.d ${DESTDIR}/etc/default
 	cp contrib/init-scripts/buildmaster.init.sh ${DESTDIR}/etc/init.d/buildmaster
 	cp contrib/init-scripts/buildmaster.default ${DESTDIR}/etc/default/buildmaster
 	dh_installinit --name=buildmaster --onlyscripts
 
-override_dh_installdocs:
-	dh_installdocs
-#	# Copy necessary images to docs directory
-#	mkdir -p ${DESTDIR}${DOCDIR}/images
-#	cp docs/images/*.png ${DESTDIR}${DOCDIR}/images
+override_dh_fixperms:
+	dh_fixperms
+	# Temporary fix for lintian warning until the next buildbot release where
+	# the issue is fixed.
+	find ${DESTDIR}/usr/share/pyshared/ -type f -name '*.py' -exec chmod 644 {} \;
+
+override_dh_installchangelogs:
+	dh_installchangelogs --keep NEWS 
