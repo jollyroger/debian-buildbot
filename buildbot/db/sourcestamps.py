@@ -13,10 +13,6 @@
 #
 # Copyright Buildbot Team Members
 
-"""
-Support for creating and reading source stamps
-"""
-
 import base64
 from twisted.python import log
 from buildbot.db import base
@@ -25,17 +21,11 @@ class SsDict(dict):
     pass
 
 class SourceStampsConnectorComponent(base.DBConnectorComponent):
-    """
-    A DBConnectorComponent to handle source stamps in the database
-    """
+    # Documentation is in developer/database.rst
 
     def addSourceStamp(self, branch, revision, repository, project,
-                          patch_body=None, patch_level=0, patch_subdir=None,
-                          changeids=[]):
-        """
-        Create a new SourceStamp instance with the given attributes, and return
-        its sourcestamp ID, via a Deferred.
-        """
+                          patch_body=None, patch_level=0, patch_author="",
+                          patch_comment="", patch_subdir=None, changeids=[]):
         def thd(conn):
             # handle inserting a patch
             patchid = None
@@ -44,6 +34,8 @@ class SourceStampsConnectorComponent(base.DBConnectorComponent):
                 r = conn.execute(ins, dict(
                     patchlevel=patch_level,
                     patch_base64=base64.b64encode(patch_body),
+                    patch_author=patch_author,
+                    patch_comment=patch_comment,
                     subdir=patch_subdir))
                 patchid = r.inserted_primary_key[0]
 
@@ -70,24 +62,6 @@ class SourceStampsConnectorComponent(base.DBConnectorComponent):
 
     @base.cached("ssdicts")
     def getSourceStamp(self, ssid):
-        """
-        Get a dictionary representing the given source stamp, or None if no
-        such source stamp exists.
-
-        The dictionary has keys C{ssid}, C{branch}, C{revision}, C{patch_body},
-        C{patch_level}, C{patch_subdir}, C{repository}, C{project}, and
-        C{changeids}.  Most are simple strings.  The C{changeids} key contains
-        a set of change IDs.  The C{patch_*} arguments will be C{None} if no
-        patch is attached.  The last is a set of changeids for this source
-        stamp.
-
-        @param bsid: buildset ID
-
-        @param no_cache: bypass cache and always fetch from database
-        @type no_cache: boolean
-
-        @returns: dictionary as above, or None, via Deferred
-        """
         def thd(conn):
             tbl = self.db.model.sourcestamps
             q = tbl.select(whereclause=(tbl.c.id == ssid))
@@ -97,8 +71,9 @@ class SourceStampsConnectorComponent(base.DBConnectorComponent):
                 return None
             ssdict = SsDict(ssid=ssid, branch=row.branch,
                     revision=row.revision, patch_body=None, patch_level=None,
-                    patch_subdir=None, repository=row.repository,
-                    project=row.project, changeids=set([]))
+                    patch_author=None, patch_comment=None, patch_subdir=None,
+                    repository=row.repository, project=row.project,
+                    changeids=set([]))
             patchid = row.patchid
             res.close()
 
@@ -112,6 +87,8 @@ class SourceStampsConnectorComponent(base.DBConnectorComponent):
                     # note the subtle renaming here
                     ssdict['patch_level'] = row.patchlevel
                     ssdict['patch_subdir'] = row.subdir
+                    ssdict['patch_author'] = row.patch_author
+                    ssdict['patch_comment'] = row.patch_comment
                     body = base64.b64decode(row.patch_base64)
                     ssdict['patch_body'] = body
                 else:

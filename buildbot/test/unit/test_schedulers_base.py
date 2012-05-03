@@ -57,10 +57,13 @@ class BaseScheduler(scheduler.SchedulerMixin, unittest.TestCase):
         self.assertRaises(AssertionError,
                 lambda : self.makeScheduler(builderNames='xxx'))
 
+    def test_constructor_builderNames_unicode(self):
+        self.makeScheduler(builderNames=[u'a'])
+
     def test_getState(self):
         sched = self.makeScheduler()
-        self.db.schedulers.fakeState(self.SCHEDULERID,
-                { 'fav_color' : ['red','purple'] })
+        self.db.state.fakeState('testsched', 'BaseScheduler',
+                fav_color=['red','purple'])
         d = sched.getState('fav_color')
         def check(res):
             self.assertEqual(res, ['red', 'purple'])
@@ -77,8 +80,8 @@ class BaseScheduler(scheduler.SchedulerMixin, unittest.TestCase):
 
     def test_getState_KeyError(self):
         sched = self.makeScheduler()
-        self.db.schedulers.fakeState(self.SCHEDULERID,
-                { 'fav_color' : ['red','purple'] })
+        self.db.state.fakeState('testsched', 'BaseScheduler',
+                fav_color=['red','purple'])
         d = sched.getState('fav_book')
         def cb(_):
             self.fail("should not succeed")
@@ -92,16 +95,18 @@ class BaseScheduler(scheduler.SchedulerMixin, unittest.TestCase):
         sched = self.makeScheduler()
         d = sched.setState('y', 14)
         def check(_):
-            self.db.schedulers.assertState(self.SCHEDULERID, { 'y' : 14 })
+            self.db.state.assertStateByClass('testsched', 'BaseScheduler',
+                    y=14)
         d.addCallback(check)
         return d
 
     def test_setState_existing(self):
         sched = self.makeScheduler()
-        self.db.schedulers.fakeState(self.SCHEDULERID, { 'x' : 13 })
+        self.db.state.fakeState('testsched', 'BaseScheduler', x=13)
         d = sched.setState('x', 14)
         def check(_):
-            self.db.schedulers.assertState(self.SCHEDULERID, { 'x' : 14 })
+            self.db.state.assertStateByClass('testsched', 'BaseScheduler',
+                    x=14)
         d.addCallback(check)
         return d
 
@@ -206,6 +211,18 @@ class BaseScheduler(scheduler.SchedulerMixin, unittest.TestCase):
                 dict(change_filter=cf),
                 self.makeFakeChange(),
                 None)
+
+    def test_change_consumption_fileIsImportant_False_onlyImportant(self):
+        return self.do_test_change_consumption(
+                dict(fileIsImportant=lambda c : False, onlyImportant=True),
+                self.makeFakeChange(),
+                None)
+
+    def test_change_consumption_fileIsImportant_True_onlyImportant(self):
+        return self.do_test_change_consumption(
+                dict(fileIsImportant=lambda c : True, onlyImportant=True),
+                self.makeFakeChange(),
+                True)
 
     def test_addBuilsetForLatest_args(self):
         sched = self.makeScheduler(name='xyz', builderNames=['y', 'z'])

@@ -132,7 +132,7 @@ class Status:
                 urllib.quote(bldr.getName(), safe=''),
                 build.getNumber(),
                 urllib.quote(step.getName(), safe=''),
-                urllib.quote(loog.getName()))
+                urllib.quote(loog.getName(), safe=''))
 
     def getChangeSources(self):
         return list(self.master.change_svc)
@@ -346,12 +346,10 @@ class Status:
             # r.bsid: check for completion, notify subscribers, unsubscribe
             pass
 
-    def build_started(self, brid, buildername, buildnum):
+    def build_started(self, brid, buildername, build_status):
         if brid in self._buildreq_observers:
-            bs = self.getBuilder(buildername).getBuild(buildnum)
-            if bs:
-                for o in self._buildreq_observers[brid]:
-                    eventually(o, bs)
+            for o in self._buildreq_observers[brid]:
+                eventually(o, build_status)
 
     def _buildrequest_subscribe(self, brid, observer):
         self._buildreq_observers.add(brid, observer)

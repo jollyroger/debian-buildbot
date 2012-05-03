@@ -82,27 +82,7 @@ option here as well.
 Poller
 ------
 
-Put this file somewhere that your buildbot configuration can import it.  Even
-in the same directory as the master.cfg should work.  Install the poller in
-the buildbot configuration as with any other change source.  Minimally,
-provide a URL that you want to poll (bzr://, bzr+ssh://, or lp:), though make
-sure the buildbot user has necessary privileges.  You may also want to specify
-these optional values.
-
-poll_interval: the number of seconds to wait between polls.  Defaults to 10
-               minutes.
-
-branch_name: any value to be used as the branch name.  Defaults to None, or
-             specify a string, or specify the constants from this file SHORT
-             or FULL to get the short branch name or full branch address.
-
-blame_merge_author: normally, the user that commits the revision is the user
-                    that is responsible for the change. When run in a pqm
-                    (Patch Queue Manager, see https://launchpad.net/pqm)
-                    environment, the user that commits is the Patch Queue
-                    Manager, and the user that committed the merged, *parent*
-                    revision is responsible for the change. set this value to
-                    True if this is pointed against a PQM-managed branch.
+See the Buildbot manual.
 
 -------------------
 Contact Information
@@ -319,7 +299,7 @@ if DEFINE_POLLER:
             d = twisted.internet.defer.Deferred()
             def _add_change():
                 d.callback(
-                    self.parent.addChange(change))
+                    self.parent.addChange(change, src='bzr'))
             twisted.internet.reactor.callLater(0, _add_change)
             return d
 
@@ -439,6 +419,7 @@ def send_change(branch, old_revno, old_revid, new_revno, new_revid, hook):
     def sendChanges(remote):
         """Send changes to buildbot."""
         bzrlib.trace.mutter("bzrbuildout sending changes: %s", change)
+        change['src'] = 'bzr'
         return remote.callRemote('addChange', change)
 
     deferred.addCallback(sendChanges)

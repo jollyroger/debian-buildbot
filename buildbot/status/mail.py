@@ -15,10 +15,11 @@
 
 
 import re
-
+import types
 from email.Message import Message
 from email.Utils import formatdate
 from email.MIMEText import MIMEText
+from email.MIMENonMultipart import MIMENonMultipart
 from email.MIMEMultipart import MIMEMultipart
 from StringIO import StringIO
 import urllib
@@ -36,6 +37,7 @@ except ImportError:
     have_ssl = False
 
 from buildbot import interfaces, util
+from buildbot.process.users import users
 from buildbot.status import base
 from buildbot.status.results import FAILURE, SUCCESS, Results
 
@@ -287,7 +289,7 @@ class MailNotifier(base.StatusReceiverMultiService):
         self.extraRecipients = extraRecipients
         self.sendToInterestedUsers = sendToInterestedUsers
         self.fromaddr = fromaddr
-        assert mode in MailNotifier.possible_modes
+        assert mode in self.possible_modes
         self.mode = mode
         self.categories = categories
         self.builders = builders
@@ -476,6 +478,7 @@ class MailNotifier(base.StatusReceiverMultiService):
                  'branch': "",
                  'revision': "",
                  'patch': "",
+                 'patch_info': "",
                  'changes': [],
                  'logs': logs}
 
@@ -484,9 +487,33 @@ class MailNotifier(base.StatusReceiverMultiService):
             attrs['branch'] = ss.branch
             attrs['revision'] = ss.revision
             attrs['patch'] = ss.patch
+            attrs['patch_info'] = ss.patch_info
             attrs['changes'] = ss.changes[:]
 
         return attrs
+
+    def patch_to_attachment(self, patch, index):
+        # patches don't come with an encoding.  If the patch is valid utf-8,
+        # we'll attach it as MIMEText; otherwise, it gets attached as a binary
+        # file.  This will suit the vast majority of cases, since utf8 is by
+        # far the most common encoding.
+        if type(patch[1]) != types.UnicodeType:
+            try:
+                    unicode = patch[1].decode('utf8')
+            except UnicodeDecodeError:
+                unicode = None
+        else:
+            unicode = patch[1]
+
+        if unicode:
+            a = MIMEText(unicode.encode(ENCODING), _charset=ENCODING)
+        else:
+            # MIMEApplication is not present in Python-2.4 :(
+            a = MIMENonMultipart('application', 'octet-stream')
+            a.set_payload(patch[1])
+        a.add_header('Content-Disposition', "attachment",
+                    filename="source patch " + str(index) )
+        return a
 
     def createEmail(self, msgdict, builderName, title, results, builds=None,
                     patches=None, logs=None):
@@ -520,9 +547,7 @@ class MailNotifier(base.StatusReceiverMultiService):
 
         if patches:
             for (i, patch) in enumerate(patches):
-                a = MIMEText(patch[1].encode(ENCODING), _charset=ENCODING)
-                a.add_header('Content-Disposition', "attachment",
-                         filename="source patch " + str(i) )
+                a = self.patch_to_attachment(patch, i)
                 m.attach(a)
         if logs:
             for log in logs:
@@ -541,16 +566,15 @@ class MailNotifier(base.StatusReceiverMultiService):
         # interpolation if only one build was given
         if self.extraHeaders:
             for k,v in self.extraHeaders.items():
-                if len(builds == 1):
-                    k = builds[0].render(k)
+                if len(builds) == 1:
+                    k = interfaces.IProperties(builds[0]).render(k)
                 if k in m:
                     twlog.msg("Warning: Got header " + k +
                       " in self.extraHeaders "
                       "but it already exists in the Message - "
                       "not adding it.")
-                continue
-                if len(builds == 1):
-                    m[k] = builds[0].render(v)
+                if len(builds) == 1:
+                    m[k] = interfaces.IProperties(builds[0]).render(v)
                 else:
                     m[k] = v
     
@@ -580,30 +604,74 @@ class MailNotifier(base.StatusReceiverMultiService):
             if ss and ss.patch and self.addPatch:
                 patches.append(ss.patch)
             if self.addLogs:
-                logs.append(build.getLogs())
-            twlog.err("LOG: %s" % str(logs))
+                logs.extend(build.getLogs())
             
             tmp = self.buildMessageDict(name=build.getBuilder().name,
                                         build=build, results=build.results)
             msgdict['body'] += tmp['body']
             msgdict['body'] += '\n\n'
             msgdict['type'] = tmp['type']
-            
+            if "subject" in tmp:
+                msgdict['subject'] = tmp['subject']
+
         m = self.createEmail(msgdict, name, self.master_status.getTitle(),
                              results, builds, patches, logs)
 
         # now, who is this message going to?
-        dl = []
-        recipients = []
-        if self.sendToInterestedUsers and self.lookup:
+        self.dl = []
+        self.recipients = []
+        if self.sendToInterestedUsers:
             for build in builds:
-                for u in build.getInterestedUsers():
-                    d = defer.maybeDeferred(self.lookup.getAddress, u)
-                    d.addCallback(recipients.append)
-                    dl.append(d)
-        d = defer.DeferredList(dl)
-        d.addCallback(self._gotRecipients, recipients, m)
+                d = defer.succeed(build)
+                if self.lookup:
+                    d.addCallback(self.useLookup)
+                else:
+                    d.addCallback(self.useUsers)
+        else:
+            d = defer.DeferredList(self.dl)
+        d.addCallback(self._gotRecipients, self.recipients, m)
         return d
+
+    def useLookup(self, build):
+        for u in build.getInterestedUsers():
+            d = defer.maybeDeferred(self.lookup.getAddress, u)
+            d.addCallback(self.recipients.append)
+            self.dl.append(d)
+        return defer.DeferredList(self.dl)
+
+    def useUsers(self, build):
+        self.contacts = []
+        ss = build.getSourceStamp()
+        for change in ss.changes:
+            d = self.parent.db.changes.getChangeUids(change.number)
+            def getContacts(uids):
+                def uidContactPair(contact, uid):
+                    return (contact, uid)
+                d = defer.succeed(None)
+                for uid in uids:
+                    d.addCallback(lambda _ :
+                                     users.getUserContact(self.parent,
+                                                          contact_type='email',
+                                                          uid=uid))
+                    d.addCallback(lambda contact: uidContactPair(contact, uid))
+                    d.addCallback(self.contacts.append)
+                return d
+            d.addCallback(getContacts)
+            def logNoMatch(_):
+                for pair in self.contacts:
+                    contact, uid = pair
+                    if contact is None:
+                        twlog.msg("Unable to find email for uid: %r" % uid)
+                return [pair[0] for pair in self.contacts]
+            d.addCallback(logNoMatch)
+            d.addCallback(self.recipients.extend)
+            def addOwners(_):
+                owners = [e for e in build.getInterestedUsers()
+                          if e not in build.getResponsibleUsers()]
+                self.recipients.extend(owners)
+            d.addCallback(addOwners)
+            self.dl.append(d)
+        return defer.DeferredList(self.dl)
 
     def _shouldAttachLog(self, logname):
         if type(self.addLogs) is bool:

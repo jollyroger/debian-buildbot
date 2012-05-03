@@ -23,7 +23,7 @@
 import copy
 import os, sys, stat, re, time
 from twisted.python import usage, util, runtime
-from twisted.internet import defer, reactor
+from twisted.internet import defer
 
 from buildbot.interfaces import BuildbotNotRunningError
 
@@ -44,6 +44,9 @@ def in_reactor(f):
         reactor.callWhenRunning(async)
         reactor.run()
         return result[0]
+    wrap.__doc__ = f.__doc__
+    wrap.__name__ = f.__name__
+    wrap._orig = f # for tests
     return wrap
 
 def isBuildmasterDir(dir):
@@ -817,6 +820,8 @@ class SendChangeOptions(OptionsWithOptionsFile):
         ("auth", "a", None, "Authentication token - username:password, or prompt for password"),
         ("who", "W", None, "Author of the commit"),
         ("repository", "R", '', "Repository specifier"),
+        ("vc", "s", None, "The VC system in use, one of: cvs, svn, darcs, hg, "
+                           "bzr, git, mtn, p4"),
         ("project", "P", '', "Project specifier"),
         ("branch", "b", None, "Branch specifier"),
         ("category", "C", None, "Category of repository"),
@@ -840,6 +845,7 @@ class SendChangeOptions(OptionsWithOptionsFile):
         [ 'username', 'username' ],
         [ 'branch', 'branch' ],
         [ 'category', 'category' ],
+        [ 'vc', 'vc' ],
     ]
 
     def getSynopsis(self):
@@ -868,6 +874,7 @@ def sendchange(config, runReactor=False):
     revision = config.get('revision')
     properties = config.get('properties', {})
     repository = config.get('repository', '')
+    vc = config.get('vc', None)
     project = config.get('project', '')
     revlink = config.get('revlink', '')
     if config.get('when'):
@@ -889,6 +896,10 @@ def sendchange(config, runReactor=False):
 
     files = config.get('files', ())
 
+    vcs = ['cvs', 'svn', 'darcs', 'hg', 'bzr', 'git', 'mtn', 'p4', None]
+    assert vc in vcs, "vc must be 'cvs', 'svn', 'darcs', 'hg', 'bzr', " \
+        "'git', 'mtn', or 'p4'"
+
     # fix up the auth with a password if none was given
     if not auth:
         auth = 'change:changepw'
@@ -903,10 +914,11 @@ def sendchange(config, runReactor=False):
 
     s = sendchange.Sender(master, auth, encoding=encoding)
     d = s.send(branch, revision, comments, files, who=who, category=category, when=when,
-               properties=properties, repository=repository, project=project,
+               properties=properties, repository=repository, vc=vc, project=project,
                revlink=revlink)
 
     if runReactor:
+        from twisted.internet import reactor
         status = [True]
         def printSuccess(_):
             print "change sent successfully"
@@ -926,6 +938,10 @@ class ForceOptions(OptionsWithOptionsFile):
         ["branch", None, None, "which branch to build"],
         ["revision", None, None, "which revision to build"],
         ["reason", None, None, "the reason for starting the build"],
+        ["props", None, None,
+         "A set of properties made available in the build environment, "
+         "format is --properties=prop1=value1,prop2=value2,.. "
+         "option can be specified multiple times."],
         ]
 
     def parseArgs(self, *args):
@@ -958,6 +974,8 @@ class TryOptions(OptionsWithOptionsFile):
          "Password for PB authentication"],
         ["who", "w", None,
          "Who is responsible for the try build"],
+        ["comment", "C", None,
+         "A comment which can be used in notifications for this build"],
 
         ["diff", None, None,
          "Filename of a patch to use instead of scanning a local tree. "
@@ -982,7 +1000,8 @@ class TryOptions(OptionsWithOptionsFile):
          "Run the trial build on this Builder. Can be used multiple times."],
         ["properties", None, None,
          "A set of properties made available in the build environment, "
-         "format:prop1=value1,prop2=value2..."],
+         "format is --properties=prop1=value1,prop2=value2,.. "
+         "option can be specified multiple times."],
 
         ["topfile", None, None,
          "Name of a file at the top of the tree, used to find the top. "
@@ -1015,17 +1034,17 @@ class TryOptions(OptionsWithOptionsFile):
         [ 'try_host', 'host' ],
         [ 'try_username', 'username' ],
         [ 'try_jobdir', 'jobdir' ],
-        [ 'try_password', 'passwd' ],
+        [ 'try_passwd', 'passwd' ],
         [ 'try_master', 'master' ],
         [ 'try_who', 'who' ],
+        [ 'try_comment', 'comment' ],
         #[ 'try_wait', 'wait' ], <-- handled in postOptions
-        [ 'try_masterstatus', 'masterstatus' ],
+        #[ 'try_quiet', 'quiet' ], <-- handled in postOptions
+
         # Deprecated command mappings from the quirky old days:
-        [ 'try_topdir', 'try-topdir' ],
-        [ 'try_topfile', 'try-topfile' ],
-        [ 'try_host', 'tryhost' ],
-        [ 'try_dir', 'trydir' ],        # replaced by try_jobdir/jobdir
-        [ 'masterstatus', 'master' ],   # replaced by try_masterstatus/masterstatus
+        [ 'try_masterstatus', 'master' ],
+        [ 'try_dir', 'jobdir' ],
+        [ 'try_password', 'passwd' ],
     ]
 
     def __init__(self):
@@ -1038,13 +1057,10 @@ class TryOptions(OptionsWithOptionsFile):
 
     def opt_properties(self, option):
         # We need to split the value of this option into a dictionary of properties
-        properties = {}
         propertylist = option.split(",")
         for i in range(0,len(propertylist)):
-            print propertylist[i]
-            splitproperty = propertylist[i].split("=")
-            properties[splitproperty[0]] = splitproperty[1]
-        self['properties'] = properties
+            splitproperty = propertylist[i].split("=", 1)
+            self['properties'][splitproperty[0]] = splitproperty[1]
 
     def opt_patchlevel(self, option):
         self['patchlevel'] = int(option)
@@ -1060,6 +1076,10 @@ class TryOptions(OptionsWithOptionsFile):
             self['wait'] = True
         if opts.get('try_quiet', False):
             self['quiet'] = True
+        # get the global 'masterstatus' option if it's set and no master
+        # was specified otherwise
+        if not self['master']:
+            self['master'] = opts.get('masterstatus', None)
 
 def doTry(config):
     from buildbot.clients import tryclient
@@ -1144,6 +1164,170 @@ def doCheckConfig(config):
 
     return d
 
+class UserOptions(OptionsWithOptionsFile):
+    optParameters = [
+        ["master", "m", None,
+         "Location of the buildmaster's PBListener (host:port)"],
+        ["username", "u", None,
+         "Username for PB authentication"],
+        ["passwd", "p", None,
+         "Password for PB authentication"],
+        ["op", None, None,
+         "User management operation: add, remove, update, get"],
+        ["bb_username", None, None,
+         "Username to set for a given user. Only availabe on 'update', "
+         "and bb_password must be given as well."],
+        ["bb_password", None, None,
+         "Password to set for a given user. Only availabe on 'update', "
+         "and bb_username must be given as well."],
+        ["ids", None, None,
+         "User's identifiers, used to find users in 'remove' and 'get' "
+         "Can be specified multiple times (--ids=id1,id2,id3)"],
+        ["info", None, None,
+         "User information in the form: --info=type=value,type=value,.. "
+         "Used in 'add' and 'update', can be specified multiple times.  "
+         "Note that 'update' requires --info=id:type=value..."]
+    ]
+    buildbotOptions = [
+        [ 'master', 'master' ],
+        [ 'user_master', 'master' ],
+        [ 'user_username', 'username' ],
+        [ 'user_passwd', 'passwd' ],
+        ]
+
+    def __init__(self):
+        OptionsWithOptionsFile.__init__(self)
+        self['ids'] = []
+        self['info'] = []
+
+    def opt_ids(self, option):
+        id_list = option.split(",")
+        self['ids'].extend(id_list)
+
+    def opt_info(self, option):
+        # splits info into type/value dictionary, appends to info
+        info_list = option.split(",")
+        info_elem = {}
+
+        if len(info_list) == 1 and '=' not in info_list[0]:
+            info_elem["identifier"] = info_list[0]
+            self['info'].append(info_elem)
+        else:
+            for i in range(0, len(info_list)):
+                split_info = info_list[i].split("=", 1)
+
+                # pull identifier from update --info
+                if ":" in split_info[0]:
+                    split_id = split_info[0].split(":")
+                    info_elem["identifier"] = split_id[0]
+                    split_info[0] = split_id[1]
+
+                info_elem[split_info[0]] = split_info[1]
+            self['info'].append(info_elem)
+
+    def getSynopsis(self):
+        return "Usage:    buildbot user [options]"
+
+    longdesc = """
+    Currently implemented types for --info= are:\n
+    git, svn, hg, cvs, darcs, bzr, email
+    """
+
+def users_client(config, runReactor=False):
+    from buildbot.clients import usersclient
+    from buildbot.process.users import users    # for srcs, encrypt
+
+    # accepted attr_types by `buildbot user`, in addition to users.srcs
+    attr_types = ['identifier', 'email']
+
+    master = config.get('master')
+    assert master, "you must provide the master location"
+    try:
+        master, port = master.split(":")
+        port = int(port)
+    except:
+        raise AssertionError("master must have the form 'hostname:port'")
+
+    op = config.get('op')
+    assert op, "you must specify an operation: add, remove, update, get"
+    if op not in ['add', 'remove', 'update', 'get']:
+        raise AssertionError("bad op %r, use 'add', 'remove', 'update', "
+                             "or 'get'" % op)
+
+    username = config.get('username')
+    passwd = config.get('passwd')
+    assert username and passwd, "A username and password pair must be given"
+
+    bb_username = config.get('bb_username')
+    bb_password = config.get('bb_password')
+    if bb_username or bb_password:
+        if op != 'update':
+            raise AssertionError("bb_username and bb_password only work "
+                                 "with update")
+        if not bb_username or not bb_password:
+            raise AssertionError("Must specify both bb_username and "
+                                 "bb_password or neither.")
+
+        bb_password = users.encrypt(bb_password)
+
+    # check op and proper args
+    info = config.get('info')
+    ids = config.get('ids')
+
+    # check for erroneous args
+    if not info and not ids:
+        raise AssertionError("must specify either --ids or --info")
+    if info and ids:
+        raise AssertionError("cannot use both --ids and --info, use "
+                         "--ids for 'remove' and 'get', --info "
+                         "for 'add' and 'update'")
+
+    if op == 'add' or op == 'update':
+        if ids:
+            raise AssertionError("cannot use --ids with 'add' or 'update'")
+        if op == 'update':
+            for user in info:
+                if 'identifier' not in user:
+                    raise ValueError("no ids found in update info, use: "
+                                     "--info=id:type=value,type=value,..")
+        if op == 'add':
+            for user in info:
+                if 'identifier' in user:
+                    raise ValueError("id found in add info, use: "
+                                     "--info=type=value,type=value,..")
+    if op == 'remove' or op == 'get':
+        if info:
+            raise AssertionError("cannot use --info with 'remove' or 'get'")
+
+    # find identifier if op == add
+    if info:
+        # check for valid types
+        for user in info:
+            for attr_type in user:
+                if attr_type not in users.srcs + attr_types:
+                    raise ValueError("Type not a valid attr_type, must be in: "
+                                     "%r" % (users.srcs + attr_types))
+
+            if op == 'add':
+                user['identifier'] = user.values()[0]
+
+    uc = usersclient.UsersClient(master, username, passwd, port)
+    d = uc.send(op, bb_username, bb_password, ids, info)
+
+    if runReactor:
+        from twisted.internet import reactor
+        status = [True]
+        def printSuccess(res):
+            print res
+        def failed(f):
+            status[0] = False
+            print "user op NOT sent - something went wrong: " + str(f)
+        d.addCallbacks(printSuccess, failed)
+        d.addBoth(lambda _ : reactor.stop())
+        reactor.run()
+        return status[0]
+    return d
+
 class Options(usage.Options):
     synopsis = "Usage:    buildbot <command> [command options]"
 
@@ -1182,6 +1366,9 @@ class Options(usage.Options):
 
         ['checkconfig', None, CheckConfigOptions,
          "test the validity of a master.cfg config file"],
+
+        ['user', None, UserOptions,
+         "Manage users in buildbot's database"]
 
         # TODO: 'watch'
         ]
@@ -1254,6 +1441,9 @@ def run():
         doTryServer(so)
     elif command == "checkconfig":
         if not doCheckConfig(so):
+            sys.exit(1)
+    elif command == "user":
+        if not users_client(so, True):
             sys.exit(1)
     sys.exit(0)
 
