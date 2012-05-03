@@ -27,6 +27,7 @@ from buildbot.process.buildstep import RemoteCommand, BuildStep
 from buildbot.process.buildstep import SUCCESS, FAILURE, SKIPPED
 from buildbot.interfaces import BuildSlaveTooOldError
 from buildbot.util import json
+from buildbot import config
 
 
 class _FileWriter(pb.Referenceable):
@@ -80,7 +81,7 @@ class _FileWriter(pb.Referenceable):
         if self.mode is not None:
             os.chmod(self.destfile, self.mode)
 
-    def __del__(self):
+    def cancel(self):
         # unclean shutdown, the file is probably truncated, so delete it
         # altogether rather than deliver a corrupted file
         fp = getattr(self, "fp", None)
@@ -168,18 +169,10 @@ class _DirectoryWriter(_FileWriter):
 
 
 class StatusRemoteCommand(RemoteCommand):
-    def __init__(self, remote_command, args):
+    def __init__(self, step, remote_command, args):
         RemoteCommand.__init__(self, remote_command, args)
-
-        self.rc = None
-        self.stderr = ''
-
-    def remoteUpdate(self, update):
-        #log.msg('StatusRemoteCommand: update=%r' % update)
-        if 'rc' in update:
-            self.rc = update['rc']
-        if 'stderr' in update:
-            self.stderr = self.stderr + update['stderr'] + '\n'
+        callback = lambda arg: step.step_status.addLog('stdio')
+        self.useLogDelayed('stdio', callback, True)
 
 class _TransferBuildStep(BuildStep):
     """
@@ -216,8 +209,6 @@ class _TransferBuildStep(BuildStep):
         # the rest
         if result == SKIPPED:
             return BuildStep.finished(self, SKIPPED)
-        if self.cmd.stderr != '':
-            self.addCompleteLog('stderr', self.cmd.stderr)
 
         if self.cmd.rc is None or self.cmd.rc == 0:
             return BuildStep.finished(self, SUCCESS)
@@ -225,30 +216,14 @@ class _TransferBuildStep(BuildStep):
 
 
 class FileUpload(_TransferBuildStep):
-    """
-    Build step to transfer a file from the slave to the master.
-
-    arguments:
-
-    - ['slavesrc']   filename of source file at slave, relative to workdir
-    - ['masterdest'] filename of destination file at master
-    - ['workdir']    string with slave working directory relative to builder
-                     base dir, default 'build'
-    - ['maxsize']    maximum size of the file, default None (=unlimited)
-    - ['blocksize']  maximum size of each block being transfered
-    - ['mode']       file access mode for the resulting master-side file.
-                     The default (=None) is to leave it up to the umask of
-                     the buildmaster process.
-    - ['keepstamp']  whether to preserve file modified and accessed times
-
-    """
 
     name = 'upload'
 
-    renderables = [ 'slavesrc', 'masterdest' ]
+    renderables = [ 'slavesrc', 'masterdest', 'url' ]
 
     def __init__(self, slavesrc, masterdest,
-                 workdir=None, maxsize=None, blocksize=16*1024, mode=None, keepstamp=False,
+                 workdir=None, maxsize=None, blocksize=16*1024, mode=None,
+                 keepstamp=False, url=None,
                  **buildstep_kwargs):
         BuildStep.__init__(self, **buildstep_kwargs)
         self.addFactoryArguments(slavesrc=slavesrc,
@@ -258,6 +233,7 @@ class FileUpload(_TransferBuildStep):
                                  blocksize=blocksize,
                                  mode=mode,
                                  keepstamp=keepstamp,
+                                 url=url,
                                  )
 
         self.slavesrc = slavesrc
@@ -265,9 +241,12 @@ class FileUpload(_TransferBuildStep):
         self.workdir = workdir
         self.maxsize = maxsize
         self.blocksize = blocksize
-        assert isinstance(mode, (int, type(None)))
+        if not isinstance(mode, (int, type(None))):
+            config.error(
+                'mode must be an integer or None')
         self.mode = mode
         self.keepstamp = keepstamp
+        self.url = url
 
     def start(self):
         version = self.slaveVersion("uploadFile")
@@ -287,6 +266,8 @@ class FileUpload(_TransferBuildStep):
                 % (source, masterdest))
 
         self.step_status.setText(['uploading', os.path.basename(source)])
+        if self.url is not None:
+            self.addURL(os.path.basename(masterdest), self.url)
 
         # we use maxsize to limit the amount of data on both sides
         fileWriter = _FileWriter(masterdest, self.maxsize, self.mode)
@@ -306,35 +287,24 @@ class FileUpload(_TransferBuildStep):
             'keepstamp': self.keepstamp,
             }
 
-        self.cmd = StatusRemoteCommand('uploadFile', args)
+        self.cmd = StatusRemoteCommand(self, 'uploadFile', args)
         d = self.runCommand(self.cmd)
+        @d.addErrback
+        def cancel(res):
+            fileWriter.cancel()
+            return res
         d.addCallback(self.finished).addErrback(self.failed)
 
 
-class DirectoryUpload(BuildStep):
-    """
-    Build step to transfer a directory from the slave to the master.
-
-    arguments:
-
-    - ['slavesrc']   name of source directory at slave, relative to workdir
-    - ['masterdest'] name of destination directory at master
-    - ['workdir']    string with slave working directory relative to builder
-                     base dir, default 'build'
-    - ['maxsize']    maximum size of the compressed tarfile containing the
-                     whole directory
-    - ['blocksize']  maximum size of each block being transfered
-    - ['compress']   compression type to use: one of [None, 'gz', 'bz2']
-
-    """
+class DirectoryUpload(_TransferBuildStep):
 
     name = 'upload'
 
-    renderables = [ 'slavesrc', 'masterdest' ]
+    renderables = [ 'slavesrc', 'masterdest', 'url' ]
 
     def __init__(self, slavesrc, masterdest,
-                 workdir="build", maxsize=None, blocksize=16*1024,
-                 compress=None, **buildstep_kwargs):
+                 workdir=None, maxsize=None, blocksize=16*1024,
+                 compress=None, url=None, **buildstep_kwargs):
         BuildStep.__init__(self, **buildstep_kwargs)
         self.addFactoryArguments(slavesrc=slavesrc,
                                  masterdest=masterdest,
@@ -342,6 +312,7 @@ class DirectoryUpload(BuildStep):
                                  maxsize=maxsize,
                                  blocksize=blocksize,
                                  compress=compress,
+                                 url=url,
                                  )
 
         self.slavesrc = slavesrc
@@ -349,8 +320,11 @@ class DirectoryUpload(BuildStep):
         self.workdir = workdir
         self.maxsize = maxsize
         self.blocksize = blocksize
-        assert compress in (None, 'gz', 'bz2')
+        if compress not in (None, 'gz', 'bz2'):
+            config.error(
+                "'compress' must be one of None, 'gz', or 'bz2'")
         self.compress = compress
+        self.url = url
 
     def start(self):
         version = self.slaveVersion("uploadDirectory")
@@ -370,6 +344,8 @@ class DirectoryUpload(BuildStep):
                 % (source, masterdest))
 
         self.step_status.setText(['uploading', os.path.basename(source)])
+        if self.url is not None:
+            self.addURL(os.path.basename(masterdest), self.url)
         
         # we use maxsize to limit the amount of data on both sides
         dirWriter = _DirectoryWriter(masterdest, self.maxsize, self.compress, 0600)
@@ -377,15 +353,19 @@ class DirectoryUpload(BuildStep):
         # default arguments
         args = {
             'slavesrc': source,
-            'workdir': self.workdir,
+            'workdir': self._getWorkdir(),
             'writer': dirWriter,
             'maxsize': self.maxsize,
             'blocksize': self.blocksize,
             'compress': self.compress
             }
 
-        self.cmd = StatusRemoteCommand('uploadDirectory', args)
+        self.cmd = StatusRemoteCommand(self, 'uploadDirectory', args)
         d = self.runCommand(self.cmd)
+        @d.addErrback
+        def cancel(res):
+            dirWriter.cancel()
+            return res
         d.addCallback(self.finished).addErrback(self.failed)
 
     def finished(self, result):
@@ -394,8 +374,6 @@ class DirectoryUpload(BuildStep):
         # the rest
         if result == SKIPPED:
             return BuildStep.finished(self, SKIPPED)
-        if self.cmd.stderr != '':
-            self.addCompleteLog('stderr', self.cmd.stderr)
 
         if self.cmd.rc is None or self.cmd.rc == 0:
             return BuildStep.finished(self, SUCCESS)
@@ -438,27 +416,7 @@ class _FileReader(pb.Referenceable):
 
 
 class FileDownload(_TransferBuildStep):
-    """
-    Download the first 'maxsize' bytes of a file, from the buildmaster to the
-    buildslave. Set the mode of the file
 
-    Arguments::
-
-     ['mastersrc'] filename of source file at master
-     ['slavedest'] filename of destination file at slave
-     ['workdir']   string with slave working directory relative to builder
-                   base dir, default 'build'
-     ['maxsize']   maximum size of the file, default None (=unlimited)
-     ['blocksize'] maximum size of each block being transfered
-     ['mode']      use this to set the access permissions of the resulting
-                   buildslave-side file. This is traditionally an octal
-                   integer, like 0644 to be world-readable (but not
-                   world-writable), or 0600 to only be readable by
-                   the buildslave account, or 0755 to be world-executable.
-                   The default (=None) is to leave it up to the umask of
-                   the buildslave process.
-
-    """
     name = 'download'
 
     renderables = [ 'mastersrc', 'slavedest' ]
@@ -480,7 +438,9 @@ class FileDownload(_TransferBuildStep):
         self.workdir = workdir
         self.maxsize = maxsize
         self.blocksize = blocksize
-        assert isinstance(mode, (int, type(None)))
+        if not isinstance(mode, (int, type(None))):
+            config.error(
+                'mode must be an integer or None')
         self.mode = mode
 
     def start(self):
@@ -522,31 +482,12 @@ class FileDownload(_TransferBuildStep):
             'mode': self.mode,
             }
 
-        self.cmd = StatusRemoteCommand('downloadFile', args)
+        self.cmd = StatusRemoteCommand(self, 'downloadFile', args)
         d = self.runCommand(self.cmd)
         d.addCallback(self.finished).addErrback(self.failed)
 
 class StringDownload(_TransferBuildStep):
-    """
-    Download the first 'maxsize' bytes of a string, from the buildmaster to the
-    buildslave. Set the mode of the file
 
-    Arguments::
-
-     ['s']         string to transfer
-     ['slavedest'] filename of destination file at slave
-     ['workdir']   string with slave working directory relative to builder
-                   base dir, default 'build'
-     ['maxsize']   maximum size of the file, default None (=unlimited)
-     ['blocksize'] maximum size of each block being transfered
-     ['mode']      use this to set the access permissions of the resulting
-                   buildslave-side file. This is traditionally an octal
-                   integer, like 0644 to be world-readable (but not
-                   world-writable), or 0600 to only be readable by
-                   the buildslave account, or 0755 to be world-executable.
-                   The default (=None) is to leave it up to the umask of
-                   the buildslave process.
-    """
     name = 'string_download'
 
     renderables = [ 'slavedest', 's' ]
@@ -568,7 +509,9 @@ class StringDownload(_TransferBuildStep):
         self.workdir = workdir
         self.maxsize = maxsize
         self.blocksize = blocksize
-        assert isinstance(mode, (int, type(None)))
+        if not isinstance(mode, (int, type(None))):
+            config.error(
+                'mode must be an integer or None')
         self.mode = mode
 
     def start(self):
@@ -599,19 +542,14 @@ class StringDownload(_TransferBuildStep):
             'mode': self.mode,
             }
 
-        self.cmd = StatusRemoteCommand('downloadFile', args)
+        self.cmd = StatusRemoteCommand(self, 'downloadFile', args)
         d = self.runCommand(self.cmd)
         d.addCallback(self.finished).addErrback(self.failed)
 
 class JSONStringDownload(StringDownload):
-    """
-    Encode object o as a json string and save it on the buildslave
 
-    Arguments::
-
-     ['o']         object to encode and transfer
-    """
     name = "json_download"
+
     def __init__(self, o, slavedest, **buildstep_kwargs):
         if 's' in buildstep_kwargs:
             del buildstep_kwargs['s']
@@ -620,11 +558,9 @@ class JSONStringDownload(StringDownload):
         self.addFactoryArguments(o=o)
 
 class JSONPropertiesDownload(StringDownload):
-    """
-    Download the current build properties as a json string and save it on the
-    buildslave
-    """
+
     name = "json_properties_download"
+
     def __init__(self, slavedest, **buildstep_kwargs):
         self.super_class = StringDownload
         if 's' in buildstep_kwargs:

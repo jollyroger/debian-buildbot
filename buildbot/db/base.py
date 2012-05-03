@@ -13,30 +13,46 @@
 #
 # Copyright Buildbot Team Members
 
-"""
-Base classes for database handling
-"""
-
 class DBConnectorComponent(object):
-    """
-    A fixed component of the DBConnector, handling one particular aspect of the
-    database.  Instances of subclasses are assigned to attributes of the
-    DBConnector object, so that they are available at e.g., C{master.db.model}
-    or C{master.db.changes}.  This parent class takes care of the necessary
-    backlinks and other housekeeping.
-    """
+    # A fixed component of the DBConnector, handling one particular aspect of
+    # the database.  Instances of subclasses are assigned to attributes of the
+    # DBConnector object, so that they are available at e.g.,
+    # C{master.db.model} or C{master.db.changes}.  This parent class takes care
+    # of the necessary backlinks and other housekeeping.
 
     connector = None
 
     def __init__(self, connector):
         self.db = connector
-        "backlink to the DBConnector object"
 
         # set up caches
         for method in dir(self.__class__):
             o = getattr(self, method)
             if isinstance(o, CachedMethod):
                 setattr(self, method, o.get_cached_method(self))
+
+    _is_check_length_necessary = None
+    def check_length(self, col, value):
+        # for use by subclasses to check that 'value' will fit in 'col', where
+        # 'col' is a table column from the model.
+
+        # ignore this check for database engines that either provide this error
+        # themselves (postgres) or that do not enforce maximum-length
+        # restrictions (sqlite)
+        if not self._is_check_length_necessary:
+            if self.db.pool.engine.dialect.name == 'mysql':
+                self._is_check_length_necessary = True
+            else:
+                # not necessary, so just stub out the method
+                self.check_length = lambda col, value : None
+                return
+
+        assert col.type.length, "column %s does not have a length" % (col,)
+        if value and len(value) > col.type.length:
+            raise RuntimeError(
+                "value for column %s is greater than max of %d characters: %s"
+                    % (col, col.type.length, value))
+
 
 class CachedMethod(object):
     def __init__(self, cache_name, method):
@@ -60,18 +76,4 @@ class CachedMethod(object):
         return wrap
 
 def cached(cache_name):
-    """
-    A decorator for "getter" functions that fetch an object from the database
-    based on a single key.  The wrapped method will only be called if the named
-    cache does not contain the key.
-
-    The wrapped function must take one argument (the key); the wrapper will
-    take a key plus an optional C{no_cache} argument which, if true, will cause
-    it to invoke the underlying method even if the key is in the cache.
-
-    The resulting method will have a C{cache} attribute which can be used to
-    access the underlying cache.
-
-    @param cache_name: name of the cache to use
-    """
     return lambda method : CachedMethod(cache_name, method)

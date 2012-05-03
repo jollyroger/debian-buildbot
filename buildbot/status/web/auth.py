@@ -15,23 +15,43 @@
 
 
 import os
-from zope.interface import Interface, implements
-from buildbot.status.web.base import HtmlResource
+from zope.interface import Interface, Attribute, implements
+from buildbot.status.web.base import HtmlResource, ActionResource
+from buildbot.status.web.base import path_to_authfail
+
+from buildbot.process.users import users
 
 class IAuth(Interface):
-    """Represent an authentication method."""
+    """
+    Represent an authentication method.
+
+    Note that each IAuth instance contains a link to the BuildMaster that
+    will be set once the IAuth instance is initialized.
+    """
+
+    master = Attribute('master', "Link to BuildMaster, set when initialized")
 
     def authenticate(self, user, passwd):
             """Check whether C{user} / C{passwd} are valid."""
+
+    def getUserInfo(self, user):
+            """return dict with user info.
+            dict( fullName="", email="", groups=[])
+            """
 
     def errmsg(self):
             """Get the reason authentication failed."""
 
 class AuthBase:
+    master = None  # set in status.web.baseweb
     err = ""
 
     def errmsg(self):
         return self.err
+
+    def getUserInfo(self, user):
+        """default dummy impl"""
+        return dict(userName=user, fullName=user, email=user+"@localhost", groups=[ user ])
 
 class BasicAuth(AuthBase):
     implements(IAuth)
@@ -43,7 +63,7 @@ class BasicAuth(AuthBase):
     def __init__(self, userpass):
         """C{userpass} is a list of (user, passwd)."""
         for item in userpass:
-            assert isinstance(item, tuple)
+            assert isinstance(item, tuple) or isinstance(item, list)
             u, p = item
             assert isinstance(u, str)
             assert isinstance(p, str)
@@ -98,10 +118,70 @@ class HTPasswdAuth(AuthBase):
             self.err = "Invalid user/passwd"
         return res
 
+class UsersAuth(AuthBase):
+    """Implement authentication against users in database"""
+    implements(IAuth)
+
+    def authenticate(self, user, passwd):
+        """
+        It checks for a matching uid in the database for the credentials
+        and return True if a match is found, False otherwise.
+
+        @param user: username portion of user credentials
+        @type user: string
+
+        @param passwd: password portion of user credentials
+        @type passwd: string
+
+        @returns: boolean via deferred.
+        """
+        d = self.master.db.users.getUserByUsername(user)
+        def check_creds(user):
+            if user:
+                if users.check_passwd(passwd, user['bb_password']):
+                    return True
+            self.err = "no user found with those credentials"
+            return False
+        d.addCallback(check_creds)
+        return d
+
 class AuthFailResource(HtmlResource):
     pageTitle = "Authentication Failed"
 
     def content(self, request, cxt):
-        template = request.site.buildbot_service.templates.get_template("authfail.html")
+        templates =request.site.buildbot_service.templates
+        template = templates.get_template("authfail.html") 
         return template.render(**cxt)
-    
+
+class AuthzFailResource(HtmlResource):
+    pageTitle = "Authorization Failed"
+
+    def content(self, request, cxt):
+        templates =request.site.buildbot_service.templates
+        template = templates.get_template("authzfail.html") 
+        return template.render(**cxt)
+
+class LoginResource(ActionResource):
+
+    def performAction(self, request):
+        authz = self.getAuthz(request)
+        d = authz.login(request)
+        def on_login(res):
+            if res:
+                status = request.site.buildbot_service.master.status
+                root = status.getBuildbotURL()
+                return request.requestHeaders.getRawHeaders('referer',
+                                                            [root])[0]
+            else:
+                return path_to_authfail(request)
+        d.addBoth(on_login)
+        return d
+
+class LogoutResource(ActionResource):
+
+    def performAction(self, request):
+        authz = self.getAuthz(request)
+        authz.logout(request)
+        status = request.site.buildbot_service.master.status
+        root = status.getBuildbotURL()
+        return request.requestHeaders.getRawHeaders('referer',[root])[0]

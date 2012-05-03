@@ -33,35 +33,56 @@ class TestPBChangeSource(
     def setUp(self):
         self.setUpPBChangeSource()
         d = self.setUpChangeSource()
-
+        @d.addCallback
         def setup(_):
-            # fill in some extra details of the master
-            self.master.slavePortnum = '9999'
             self.master.pbmanager = self.pbmanager
-        d.addCallback(setup)
 
         return d
 
-    def test_registration_slaveport(self):
-        return self._test_registration(('9999', 'alice', 'sekrit'),
+    def test_registration_no_slaveport(self):
+        return self._test_registration(None,
                 user='alice', passwd='sekrit')
+
+    def test_registration_global_slaveport(self):
+        return self._test_registration(('9999', 'alice', 'sekrit'),
+                slavePort='9999', user='alice', passwd='sekrit')
 
     def test_registration_custom_port(self):
         return self._test_registration(('8888', 'alice', 'sekrit'),
                 user='alice', passwd='sekrit', port='8888')
 
     def test_registration_no_userpass(self):
-        return self._test_registration(('9999', 'change', 'changepw'))
+        return self._test_registration(('9939', 'change', 'changepw'),
+                slavePort='9939')
 
-    def _test_registration(self, exp_registration, **constr_kwargs):
+    def test_registration_no_userpass_no_global(self):
+        return self._test_registration(None)
+
+    @defer.deferredGenerator
+    def _test_registration(self, exp_registration, slavePort=None,
+                        **constr_kwargs):
+        config = mock.Mock()
+        config.slavePortnum = slavePort
         self.attachChangeSource(pb.PBChangeSource(**constr_kwargs))
+
         self.startChangeSource()
-        self.assertRegistered(*exp_registration)
-        d = self.stopChangeSource()
-        def check(_):
+        wfd = defer.waitForDeferred(
+                self.changesource.reconfigService(config))
+        yield wfd
+        wfd.getResult()
+
+        if exp_registration:
+            self.assertRegistered(*exp_registration)
+        else:
+            self.assertNotRegistered()
+
+        wfd = defer.waitForDeferred(
+                self.stopChangeSource())
+        yield wfd
+        wfd.getResult()
+
+        if exp_registration:
             self.assertUnregistered(*exp_registration)
-        d.addCallback(check)
-        return d
 
     def test_perspective(self):
         self.attachChangeSource(pb.PBChangeSource('alice', 'sekrit', port='8888'))
@@ -81,13 +102,66 @@ class TestPBChangeSource(
         cs = pb.PBChangeSource(port=9989)
         self.assertSubstring("PBChangeSource", cs.describe())
 
+    @defer.deferredGenerator
+    def test_reconfigService_no_change(self):
+        config = mock.Mock()
+        self.attachChangeSource(pb.PBChangeSource(port='9876'))
+
+        self.startChangeSource()
+        wfd = defer.waitForDeferred(
+                self.changesource.reconfigService(config))
+        yield wfd
+        wfd.getResult()
+
+        self.assertRegistered('9876', 'change', 'changepw')
+
+        wfd = defer.waitForDeferred(
+                self.stopChangeSource())
+        yield wfd
+        wfd.getResult()
+
+        self.assertUnregistered('9876', 'change', 'changepw')
+
+    @defer.deferredGenerator
+    def test_reconfigService_default_changed(self):
+        config = mock.Mock()
+        config.slavePortnum = '9876'
+        self.attachChangeSource(pb.PBChangeSource())
+
+        self.startChangeSource()
+        wfd = defer.waitForDeferred(
+                self.changesource.reconfigService(config))
+        yield wfd
+        wfd.getResult()
+
+        self.assertRegistered('9876', 'change', 'changepw')
+
+        config.slavePortnum = '1234'
+
+        wfd = defer.waitForDeferred(
+                self.changesource.reconfigService(config))
+        yield wfd
+        wfd.getResult()
+
+        self.assertUnregistered('9876', 'change', 'changepw')
+        self.assertRegistered('1234', 'change', 'changepw')
+
+        wfd = defer.waitForDeferred(
+                self.stopChangeSource())
+        yield wfd
+        wfd.getResult()
+
+        self.assertUnregistered('1234', 'change', 'changepw')
+
+
 class TestChangePerspective(unittest.TestCase):
     def setUp(self):
         self.added_changes = []
         self.master = mock.Mock()
+
         def addChange(**chdict):
             self.added_changes.append(chdict)
-            return defer.succeed(None)
+            return defer.succeed(mock.Mock())
         self.master.addChange = addChange
 
     def test_addChange_noprefix(self):
@@ -116,7 +190,8 @@ class TestChangePerspective(unittest.TestCase):
                 )
         def check(_):
             self.assertEqual(self.added_changes,
-                    [ dict(project="", revlink="", repository="", files=[]) ])
+                    [ dict(project="", revlink="", repository="",
+                           files=[]) ])
         d.addCallback(check)
         return d
 
@@ -146,13 +221,11 @@ class TestChangePerspective(unittest.TestCase):
         cp = pb.ChangePerspective(self.master, None)
         d = cp.perspective_addChange(dict(author=u"\N{SNOWMAN}",
                     comments=u"\N{SNOWMAN}",
-                    links=[u'\N{HEAVY BLACK HEART}'],
                     files=[u'\N{VERY MUCH GREATER-THAN}']))
         def check(_):
             self.assertEqual(self.added_changes,
                     [ dict(author=u"\N{SNOWMAN}",
                       comments=u"\N{SNOWMAN}",
-                      links=[u'\N{HEAVY BLACK HEART}'],
                       files=[u'\N{VERY MUCH GREATER-THAN}']) ])
         d.addCallback(check)
         return d
@@ -161,13 +234,11 @@ class TestChangePerspective(unittest.TestCase):
         cp = pb.ChangePerspective(self.master, None)
         d = cp.perspective_addChange(dict(author=u"\N{SNOWMAN}".encode('utf8'),
                     comments=u"\N{SNOWMAN}".encode('utf8'),
-                    links=[u'\N{HEAVY BLACK HEART}'.encode('utf8')],
                     files=[u'\N{VERY MUCH GREATER-THAN}'.encode('utf8')]))
         def check(_):
             self.assertEqual(self.added_changes,
                     [ dict(author=u"\N{SNOWMAN}",
                       comments=u"\N{SNOWMAN}",
-                      links=[u'\N{HEAVY BLACK HEART}'],
                       files=[u'\N{VERY MUCH GREATER-THAN}']) ])
         d.addCallback(check)
         return d
@@ -194,3 +265,12 @@ class TestChangePerspective(unittest.TestCase):
         d.addCallback(check)
         return d
 
+    def test_createUserObject_git_src(self):
+        cp = pb.ChangePerspective(self.master, None)
+        d = cp.perspective_addChange(dict(who="c <h@c>", src='git'))
+        def check_change(_):
+            self.assertEqual(self.added_changes, [ dict(author="c <h@c>",
+                                                        files=[],
+                                                        src='git') ])
+        d.addCallback(check_change)
+        return d

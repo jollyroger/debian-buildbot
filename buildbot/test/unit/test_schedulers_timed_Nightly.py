@@ -21,14 +21,15 @@ from twisted.python import log
 from buildbot.schedulers import timed
 from buildbot.test.util import scheduler
 from buildbot.changes import filter
+from buildbot import config
 
 class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
 
-    SCHEDULERID = 132
+    OBJECTID = 132
 
     def makeScheduler(self, firstBuildDuration=0, **kwargs):
         sched = self.attachScheduler(timed.Nightly(**kwargs),
-                self.SCHEDULERID)
+                self.OBJECTID)
 
         # add a Clock to help checking timing issues
         self.clock = sched._reactor = task.Clock()
@@ -80,7 +81,7 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
         assert sched.change_filter
 
     def test_constructor_no_branch(self):
-        self.assertRaises(AssertionError,
+        self.assertRaises(config.ConfigErrors,
             lambda : self.makeScheduler(name='test', builderNames=['test'],
                 change_filter=filter.ChangeFilter(category_re="fo+o")))
 
@@ -256,20 +257,20 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
                         minute=[10, 20, 21, 40, 50, 51])
 
         # add a change classification
-        self.db.schedulers.fakeClassifications(self.SCHEDULERID,
+        self.db.schedulers.fakeClassifications(self.OBJECTID,
                                                             { 19 : True })
 
         sched.startService()
 
         # check that the classification has been flushed, since this
         # invocation has not requested onlyIfChanged
-        self.db.schedulers.assertClassifications(self.SCHEDULERID, {})
+        self.db.schedulers.assertClassifications(self.OBJECTID, {})
 
         self.clock.advance(0) # let it get set up
         while self.clock.seconds() < 30*60: # run for 30 minutes
             self.clock.advance(60)
         self.assertEqual(self.events, [ 'B(None)@600', 'B(None)@1200', 'B(None)@1260' ])
-        self.db.schedulers.assertState(self.SCHEDULERID, {'last_build': 1260})
+        self.db.state.assertStateByClass('test', 'Nightly', last_build=1260)
 
         d = sched.stopService()
         return d
@@ -285,7 +286,7 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
         while self.clock.seconds() < 10*60: # run for 10 minutes
             self.clock.advance(60)
         self.assertEqual(self.events, [ 'B(master)@300' ])
-        self.db.schedulers.assertState(self.SCHEDULERID, {'last_build': 300})
+        self.db.state.assertStateByClass('test', 'Nightly', last_build=300)
 
         d = sched.stopService()
         return d
@@ -299,7 +300,8 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
         sched.startService()
 
         # check that the scheduler has started to consume changes
-        self.assertConsumingChanges(fileIsImportant=fII, change_filter=None)
+        self.assertConsumingChanges(fileIsImportant=fII, change_filter=None,
+                                    onlyImportant=False)
 
         # manually run the clock forward through a half-hour, allowing any
         # excitement to take place
@@ -316,7 +318,7 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
     def test_iterations_onlyIfChanged_no_changes(self):
         self.do_test_iterations_onlyIfChanged()
         self.assertEqual(self.events, [])
-        self.db.schedulers.assertState(self.SCHEDULERID, {'last_build': 1500})
+        self.db.state.assertStateByClass('test', 'Nightly', last_build=1500)
         return self.sched.stopService()
 
     def test_iterations_onlyIfChanged_unimp_changes(self):
@@ -324,7 +326,7 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
                 (60, mock.Mock(), False),
                 (600, mock.Mock(), False))
         self.assertEqual(self.events, [])
-        self.db.schedulers.assertState(self.SCHEDULERID, {'last_build': 1500})
+        self.db.state.assertStateByClass('test', 'Nightly', last_build=1500)
         return self.sched.stopService()
 
     def test_iterations_onlyIfChanged_off_branch_changes(self):
@@ -332,7 +334,7 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
                 (60, self.makeFakeChange(branch='testing'), True),
                 (1700, self.makeFakeChange(branch='staging'), True))
         self.assertEqual(self.events, [])
-        self.db.schedulers.assertState(self.SCHEDULERID, {'last_build': 1500})
+        self.db.state.assertStateByClass('test', 'Nightly', last_build=1500)
         return self.sched.stopService()
 
     def test_iterations_onlyIfChanged_mixed_changes(self):
@@ -346,5 +348,5 @@ class Nightly(scheduler.SchedulerMixin, unittest.TestCase):
         # off-branch changes, and note that no build took place at 300s, as no important
         # changes had yet arrived
         self.assertEqual(self.events, [ 'B[3,5,6]@1500' ])
-        self.db.schedulers.assertState(self.SCHEDULERID, {'last_build': 1500})
+        self.db.state.assertStateByClass('test', 'Nightly', last_build=1500)
         return self.sched.stopService()

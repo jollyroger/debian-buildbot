@@ -24,35 +24,24 @@ special cases that Buildbot needs.  Those include:
 """
 
 import os
-import sqlalchemy
+import sqlalchemy as sa
+from twisted.python import log
 from sqlalchemy.engine import strategies, url
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, Pool
+from buildbot.util import sautils
 
 # from http://www.mail-archive.com/sqlalchemy@googlegroups.com/msg15079.html
 class ReconnectingListener(object):
     def __init__(self):
         self.retried = False
-    def checkout(self, dbapi_con, con_record, con_proxy):
-        try:
-            try:
-                dbapi_con.ping(False)
-            except TypeError:
-                dbapi_con.ping()
-        except dbapi_con.OperationalError, ex:
-            if ex.args[0] in (2006, 2013, 2014, 2045, 2055):
-                # sqlalchemy will re-create the connection
-                raise sqlalchemy.exc.DisconnectionError()
-            raise
 
 class BuildbotEngineStrategy(strategies.ThreadLocalEngineStrategy):
-    """
-    A subclass of the ThreadLocalEngineStrategy that can effectively interact
-    with Buildbot.
-
-    This adjusts the passed-in parameters to ensure that we get the behaviors
-    Buildbot wants from particular drivers, and wraps the outgoing Engine
-    object so that its methods run in threads and return deferreds.
-    """
+    # A subclass of the ThreadLocalEngineStrategy that can effectively interact
+    # with Buildbot.
+    # 
+    # This adjusts the passed-in parameters to ensure that we get the behaviors
+    # Buildbot wants from particular drivers, and wraps the outgoing Engine
+    # object so that its methods run in threads and return deferreds.
 
     name = 'buildbot'
 
@@ -81,7 +70,22 @@ class BuildbotEngineStrategy(strategies.ThreadLocalEngineStrategy):
             kwargs['pool_size'] = 1
             max_conns = 1
 
+        # allow serializing access to the db
+        if 'serialize_access' in u.query:
+            u.query.pop('serialize_access')
+            max_conns = 1
+
         return u, kwargs, max_conns
+
+    def set_up_sqlite_engine(self, u, engine):
+        """Special setup for sqlite engines"""
+        # try to enable WAL logging
+        if u.database:
+            log.msg("setting database journal mode to 'wal'")
+            try:
+                engine.execute("pragma journal_mode = wal")
+            except:
+                log.msg("failed to set journal mode - database may fail")
 
     def special_case_mysql(self, u, kwargs):
         """For mysql, take max_idle out of the query arguments, and
@@ -116,7 +120,26 @@ class BuildbotEngineStrategy(strategies.ThreadLocalEngineStrategy):
         # one.  This provides a measure of additional safety over
         # the pool_recycle parameter, and is useful when e.g., the
         # mysql server goes away
-        kwargs['listeners'] = [ ReconnectingListener() ]
+        def checkout_listener(dbapi_con, con_record, con_proxy):
+            try:
+                cursor = dbapi_con.cursor()
+                cursor.execute("SELECT 1")
+            except dbapi_con.OperationalError, ex:
+                if ex.args[0] in (2006, 2013, 2014, 2045, 2055):
+                    # sqlalchemy will re-create the connection
+                    raise sa.exc.DisconnectionError()
+                raise
+
+        # older versions of sqlalchemy require the listener to be specified
+        # in the kwargs, in a class instance
+        if sautils.sa_version() < (0,7,0):
+            class ReconnectingListener(object):
+                pass
+            rcl = ReconnectingListener()
+            rcl.checkout = checkout_listener
+            kwargs['listeners'] = [ rcl ]
+        else:
+            sa.event.listen(Pool, 'checkout', checkout_listener)
 
         return u, kwargs, None
 
@@ -148,17 +171,20 @@ class BuildbotEngineStrategy(strategies.ThreadLocalEngineStrategy):
         # by DBConnector to configure the surrounding thread pool
         engine.optimal_thread_pool_size = max_conns
 
-        # and keep the basedir
+        # keep the basedir
         engine.buildbot_basedir = basedir
+
+        if u.drivername.startswith('sqlite'):
+            self.set_up_sqlite_engine(u, engine)
 
         return engine
 
 BuildbotEngineStrategy()
 
 # this module is really imported for the side-effects, but pyflakes will like
-# us to use something from the module -- so offer a copy of create_engine, which
-# explicitly adds the strategy argument
+# us to use something from the module -- so offer a copy of create_engine,
+# which explicitly adds the strategy argument
 def create_engine(*args, **kwargs):
     kwargs['strategy'] = 'buildbot'
 
-    return sqlalchemy.create_engine(*args, **kwargs)
+    return sa.create_engine(*args, **kwargs)

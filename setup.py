@@ -161,9 +161,18 @@ class our_sdist(sdist):
 
     def make_release_tree(self, base_dir, files):
         sdist.make_release_tree(self, base_dir, files)
+
         # ensure there's a buildbot/VERSION file
         fn = os.path.join(base_dir, 'buildbot', 'VERSION')
         open(fn, 'w').write(version)
+
+        # ensure that NEWS has a copy of the latest release notes, with the
+        # proper version substituted
+        src_fn = os.path.join('docs', 'release-notes.rst')
+        src = open(src_fn).read()
+        src = src.replace('|version|', version)
+        dst_fn = os.path.join(base_dir, 'NEWS')
+        open(dst_fn, 'w').write(src)
 
 
 long_description="""
@@ -215,7 +224,9 @@ setup_args = {
               "buildbot.steps",
               "buildbot.steps.package",
               "buildbot.steps.package.rpm",
+              "buildbot.steps.source",
               "buildbot.process",
+              "buildbot.process.users",
               "buildbot.clients",
               "buildbot.monkeypatches",
               "buildbot.schedulers",
@@ -280,8 +291,9 @@ else:
         'twisted >= 8.0.0',
         'Jinja2 >= 2.1',
         'sqlalchemy >= 0.6',
-        # buildbot depends on sqlalchemy internals. See buildbot.db.model.
-        'sqlalchemy-migrate == 0.6',
+        # buildbot depends on sqlalchemy internals, and these are the tested
+        # versions.
+        'sqlalchemy-migrate ==0.6.0, ==0.6.1, ==0.7.0, ==0.7.1, ==0.7.2',
     ]
     # Python-2.6 and up includes json
     if not py_26:
@@ -293,6 +305,7 @@ else:
 
     if os.getenv('NO_INSTALL_REQS'):
         setup_args['install_requires'] = None
+        setup_args['tests_require'] = None
 
 setup(**setup_args)
 

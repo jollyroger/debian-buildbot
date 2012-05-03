@@ -13,12 +13,16 @@
 #
 # Copyright Buildbot Team Members
 
+import os
 from twisted.trial import unittest
 from twisted.internet import defer
 from exceptions import Exception
 from buildbot.changes import gitpoller
 from buildbot.test.util import changesource, gpo
 from buildbot.util import epoch2datetime
+
+# Test that environment variables get propagated to subprocesses (See #2116)
+os.environ['TEST_THAT_ENVIRONMENT_GETS_PASSED_TO_SUBPROCESSES'] = 'TRUE'
 
 class GitOutputParsing(gpo.GetProcessOutputMixin, unittest.TestCase):
     """Test GitPoller methods for parsing git output"""
@@ -77,10 +81,10 @@ class GitOutputParsing(gpo.GetProcessOutputMixin, unittest.TestCase):
             self.assertEquals(r, desiredGoodResult)
         d.addCallback(cb_desired)
         
-    def test_get_commit_name(self):
-        nameStr = 'Sammy Jankis'
-        return self._perform_git_output_test(self.poller._get_commit_name,
-                nameStr, nameStr)
+    def test_get_commit_author(self):
+        authorStr = 'Sammy Jankis <email@example.com>'
+        return self._perform_git_output_test(self.poller._get_commit_author,
+                authorStr, authorStr)
         
     def test_get_commit_comments(self):
         commentStr = 'this is a commit message\n\nthat is multiline'
@@ -120,6 +124,11 @@ class TestGitPoller(gpo.GetProcessOutputMixin,
         self.assertSubstring("GitPoller", self.poller.describe())
 
     def test_poll(self):
+        # Test that environment variables get propagated to subprocesses (See #2116)
+        os.putenv('TEST_THAT_ENVIRONMENT_GETS_PASSED_TO_SUBPROCESSES', 'TRUE')
+        self.addGetProcessOutputExpectEnv({'TEST_THAT_ENVIRONMENT_GETS_PASSED_TO_SUBPROCESSES': 'TRUE'})
+        self.addGetProcessOutputAndValueExpectEnv({'TEST_THAT_ENVIRONMENT_GETS_PASSED_TO_SUBPROCESSES': 'TRUE'})
+
         # patch out getProcessOutput and getProcessOutputAndValue for the
         # benefit of the _get_changes method
         self.addGetProcessOutputResult(
@@ -139,9 +148,9 @@ class TestGitPoller(gpo.GetProcessOutputMixin,
         def timestamp(rev):
             return defer.succeed(1273258009.0)
         self.patch(self.poller, '_get_commit_timestamp', timestamp)
-        def name(rev):
+        def author(rev):
             return defer.succeed('by:' + rev[:8])
-        self.patch(self.poller, '_get_commit_name', name)
+        self.patch(self.poller, '_get_commit_author', author)
         def files(rev):
             return defer.succeed(['/etc/' + rev[:3]])
         self.patch(self.poller, '_get_commit_files', files)
@@ -153,7 +162,7 @@ class TestGitPoller(gpo.GetProcessOutputMixin,
         d = self.poller.poll()
 
         # check the results
-        def check(_):
+        def check_changes(_):
             self.assertEqual(len(self.changes_added), 2)
             self.assertEqual(self.changes_added[0]['author'], 'by:4423cdbc')
             self.assertEqual(self.changes_added[0]['when_timestamp'],
@@ -161,11 +170,13 @@ class TestGitPoller(gpo.GetProcessOutputMixin,
             self.assertEqual(self.changes_added[0]['comments'], 'hello!')
             self.assertEqual(self.changes_added[0]['branch'], 'master')
             self.assertEqual(self.changes_added[0]['files'], [ '/etc/442' ])
+            self.assertEqual(self.changes_added[0]['src'], 'git')
             self.assertEqual(self.changes_added[1]['author'], 'by:64a5dc2a')
             self.assertEqual(self.changes_added[1]['when_timestamp'],
                                         epoch2datetime(1273258009))
             self.assertEqual(self.changes_added[1]['comments'], 'hello!')
             self.assertEqual(self.changes_added[1]['files'], [ '/etc/64a' ])
-        d.addCallback(check)
+            self.assertEqual(self.changes_added[1]['src'], 'git')
+        d.addCallback(check_changes)
 
         return d

@@ -14,27 +14,27 @@
 # Copyright Buildbot Team Members
 
 
-from twisted.python import log
+from twisted.python import log, reflect
 from twisted.python.failure import Failure
 from twisted.internet import defer, reactor
 from twisted.spread import pb
 from twisted.application import service
 
 from buildbot.process.builder import Builder
-from buildbot import interfaces, locks
+from buildbot import interfaces, locks, config, util
 from buildbot.process import metrics
 
-class BotMaster(service.MultiService):
+class BotMaster(config.ReconfigurableServiceMixin, service.MultiService):
 
     """This is the master-side service which manages remote buildbot slaves.
     It provides them with BuildSlaves, and distributes build requests to
     them."""
 
     debug = 0
-    reactor = reactor
 
     def __init__(self, master):
         service.MultiService.__init__(self)
+        self.setName("botmaster")
         self.master = master
 
         self.builders = {}
@@ -56,10 +56,6 @@ class BotMaster(service.MultiService):
         # self.mergeRequests is the callable override for merging build
         # requests
         self.mergeRequests = None
-
-        # self.prioritizeBuilders is the callable override for builder order
-        # traversal
-        self.prioritizeBuilders = None
 
         self.shuttingDown = False
 
@@ -125,183 +121,23 @@ class BotMaster(service.MultiService):
         log.msg("Cancelling clean shutdown")
         self.shuttingDown = False
 
-    def loadConfig_Slaves(self, new_slaves):
-        timer = metrics.Timer("BotMaster.loadConfig_Slaves()")
-        timer.start()
-        new_portnum = (self.lastSlavePortnum is not None
-                   and self.lastSlavePortnum != self.master.slavePortnum)
-        if new_portnum:
-            # it turns out this is pretty hard..
-            raise ValueError("changing slavePortnum in reconfig is not supported")
-        self.lastSlavePortnum = self.master.slavePortnum
-
-        old_slaves = [c for c in list(self)
-                      if interfaces.IBuildSlave.providedBy(c)]
-
-        # identify added/removed slaves. For each slave we construct a tuple
-        # of (name, password, class), and we consider the slave to be already
-        # present if the tuples match. (we include the class to make sure
-        # that BuildSlave(name,pw) is different than
-        # SubclassOfBuildSlave(name,pw) ). If the password or class has
-        # changed, we will remove the old version of the slave and replace it
-        # with a new one. If anything else has changed, we just update the
-        # old BuildSlave instance in place. If the name has changed, of
-        # course, it looks exactly the same as deleting one slave and adding
-        # an unrelated one.
-
-        old_t = {}
-        for s in old_slaves:
-            old_t[s.identity()] = s
-        new_t = {}
-        for s in new_slaves:
-            new_t[s.identity()] = s
-        removed = [old_t[t]
-                   for t in old_t
-                   if t not in new_t]
-        added = [new_t[t]
-                 for t in new_t
-                 if t not in old_t]
-        remaining_t = [t
-                       for t in new_t
-                       if t in old_t]
-
-        # removeSlave will hang up on the old bot
-        dl = []
-        for s in removed:
-            dl.append(self.removeSlave(s))
-        d = defer.DeferredList(dl, fireOnOneErrback=True)
-
-        def add_new(res):
-            for s in added:
-                self.addSlave(s)
-        d.addCallback(add_new)
-
-        def update_remaining(_):
-            for t in remaining_t:
-                old_t[t].update(new_t[t])
-
-        d.addCallback(update_remaining)
-
-        def stop(_):
-            metrics.MetricCountEvent.log("num_slaves",
-                len(self.slaves), absolute=True)
-            timer.stop()
-            return _
-        d.addBoth(stop)
-
-        return d
-
-    def addSlave(self, s):
-        s.setServiceParent(self)
-        s.setBotmaster(self)
-        self.slaves[s.slavename] = s
-        s.pb_registration = self.master.pbmanager.register(
-                self.master.slavePortnum, s.slavename,
-                s.password, self.getPerspective)
-        # do not call maybeStartBuildsForSlave here, as the slave has not
-        # necessarily attached yet
-
-    @metrics.countMethod('BotMaster.removeSlave()')
-    def removeSlave(self, s):
-        d = s.disownServiceParent()
-        d.addCallback(lambda _ : s.pb_registration.unregister())
-        d.addCallback(lambda _ : self.slaves[s.slavename].disconnect())
-        def delslave(_):
-            del self.slaves[s.slavename]
-        d.addCallback(delslave)
-        return d
-
     @metrics.countMethod('BotMaster.slaveLost()')
     def slaveLost(self, bot):
         metrics.MetricCountEvent.log("BotMaster.attached_slaves", -1)
         for name, b in self.builders.items():
-            if bot.slavename in b.slavenames:
+            if bot.slavename in b.config.slavenames:
                 b.detached(bot)
 
     @metrics.countMethod('BotMaster.getBuildersForSlave()')
     def getBuildersForSlave(self, slavename):
-        return [b
-                for b in self.builders.values()
-                if slavename in b.slavenames]
+        return [ b for b in self.builders.values()
+                 if slavename in b.config.slavenames ]
 
     def getBuildernames(self):
         return self.builderNames
 
     def getBuilders(self):
-        allBuilders = [self.builders[name] for name in self.builderNames]
-        return allBuilders
-
-    def setBuilders(self, builders):
-        # TODO: diff against previous list of builders instead of replacing
-        # wholesale?
-        self.builders = {}
-        self.builderNames = []
-        d = defer.DeferredList([b.disownServiceParent() for b in list(self)
-                                if isinstance(b, Builder)],
-                               fireOnOneErrback=True)
-        def _add(ign):
-            log.msg("setBuilders._add: %s %s" % (list(self), [b.name for b in builders]))
-            for b in builders:
-                for slavename in b.slavenames:
-                    # this is actually validated earlier
-                    assert slavename in self.slaves
-                self.builders[b.name] = b
-                self.builderNames.append(b.name)
-                b.setBotmaster(self)
-                b.setServiceParent(self)
-        d.addCallback(_add)
-        d.addCallback(lambda ign: self._updateAllSlaves())
-        # N.B. this takes care of starting all builders at master startup
-        d.addCallback(lambda _ :
-            self.maybeStartBuildsForAllBuilders())
-        return d
-
-    def _updateAllSlaves(self):
-        """Notify all buildslaves about changes in their Builders."""
-        timer = metrics.Timer("BotMaster._updateAllSlaves()")
-        timer.start()
-        dl = []
-        for s in self.slaves.values():
-            d = s.updateSlave()
-            d.addErrback(log.err)
-            dl.append(d)
-        d = defer.DeferredList(dl)
-        def stop(_):
-            timer.stop()
-            return _
-        d.addBoth(stop)
-        return d
-
-    @metrics.countMethod('BotMaster.shouldMergeRequests()')
-    def shouldMergeRequests(self, builder, req1, req2):
-        """Determine whether two BuildRequests should be merged for
-        the given builder.
-
-        """
-        if self.mergeRequests is not None:
-            if callable(self.mergeRequests):
-                return self.mergeRequests(builder, req1, req2)
-            elif self.mergeRequests == False:
-                # To save typing, this allows c['mergeRequests'] = False
-                return False
-        return req1.canBeMergedWith(req2)
-
-    def getPerspective(self, mind, slavename):
-        sl = self.slaves[slavename]
-        if not sl:
-            return None
-        metrics.MetricCountEvent.log("BotMaster.attached_slaves", 1)
-
-        # record when this connection attempt occurred
-        sl.recordConnectTime()
-
-        if sl.isConnected():
-            # duplicate slave - send it to arbitration
-            arb = DuplicateSlaveArbitrator(sl)
-            return arb.getPerspective(mind, slavename)
-        else:
-            log.msg("slave '%s' attaching from %s" % (slavename, mind.broker.transport.getPeer()))
-            return sl
+        return self.builders.values()
 
     def startService(self):
         def buildRequestAdded(notif):
@@ -309,6 +145,146 @@ class BotMaster(service.MultiService):
         self.buildrequest_sub = \
             self.master.subscribeToBuildRequests(buildRequestAdded)
         service.MultiService.startService(self)
+
+    @defer.deferredGenerator
+    def reconfigService(self, new_config):
+        timer = metrics.Timer("BotMaster.reconfigService")
+        timer.start()
+
+        # reconfigure slaves
+        wfd = defer.waitForDeferred(
+            self.reconfigServiceSlaves(new_config))
+        yield wfd
+        wfd.getResult()
+
+        # reconfigure builders
+        wfd = defer.waitForDeferred(
+            self.reconfigServiceBuilders(new_config))
+        yield wfd
+        wfd.getResult()
+
+        wfd = defer.waitForDeferred(
+            config.ReconfigurableServiceMixin.reconfigService(self,
+                                                    new_config))
+        yield wfd
+        wfd.getResult()
+
+        # try to start a build for every builder; this is necessary at master
+        # startup, and a good idea in any other case
+        self.maybeStartBuildsForAllBuilders()
+
+        timer.stop()
+
+
+    @defer.deferredGenerator
+    def reconfigServiceSlaves(self, new_config):
+
+        timer = metrics.Timer("BotMaster.reconfigServiceSlaves")
+        timer.start()
+
+        # arrange slaves by name
+        old_by_name = dict([ (s.slavename, s)
+                            for s in list(self)
+                            if interfaces.IBuildSlave.providedBy(s) ])
+        old_set = set(old_by_name.iterkeys())
+        new_by_name = dict([ (s.slavename, s)
+                            for s in new_config.slaves ])
+        new_set = set(new_by_name.iterkeys())
+
+        # calculate new slaves, by name, and removed slaves
+        removed_names, added_names = util.diffSets(old_set, new_set)
+
+        # find any slaves for which the fully qualified class name has
+        # changed, and treat those as an add and remove
+        for n in old_set & new_set:
+            old = old_by_name[n]
+            new = new_by_name[n]
+            # detect changed class name
+            if reflect.qual(old.__class__) != reflect.qual(new.__class__):
+                removed_names.add(n)
+                added_names.add(n)
+
+        if removed_names or added_names:
+            log.msg("adding %d new slaves, removing %d" %
+                    (len(added_names), len(removed_names)))
+
+            for n in removed_names:
+                slave = old_by_name[n]
+
+                del self.slaves[n]
+                slave.master = None
+                slave.botmaster = None
+
+                wfd = defer.waitForDeferred(
+                    defer.maybeDeferred(lambda :
+                        slave.disownServiceParent()))
+                yield wfd
+                wfd.getResult()
+
+            for n in added_names:
+                slave = new_by_name[n]
+                slave.setServiceParent(self)
+
+                slave.botmaster = self
+                slave.master = self.master
+                self.slaves[n] = slave
+
+        metrics.MetricCountEvent.log("num_slaves",
+                len(self.slaves), absolute=True)
+
+        timer.stop()
+
+
+    @defer.deferredGenerator
+    def reconfigServiceBuilders(self, new_config):
+
+        timer = metrics.Timer("BotMaster.reconfigServiceBuilders")
+        timer.start()
+
+        # arrange builders by name
+        old_by_name = dict([ (b.name, b)
+                            for b in list(self)
+                            if isinstance(b, Builder) ])
+        old_set = set(old_by_name.iterkeys())
+        new_by_name = dict([ (bc.name, bc)
+                            for bc in new_config.builders ])
+        new_set = set(new_by_name.iterkeys())
+
+        # calculate new builders, by name, and removed builders
+        removed_names, added_names = util.diffSets(old_set, new_set)
+
+        if removed_names or added_names:
+            log.msg("adding %d new builders, removing %d" %
+                    (len(added_names), len(removed_names)))
+
+            for n in removed_names:
+                builder = old_by_name[n]
+
+                del self.builders[n]
+                builder.master = None
+                builder.botmaster = None
+
+                wfd = defer.waitForDeferred(
+                    defer.maybeDeferred(lambda :
+                        builder.disownServiceParent()))
+                yield wfd
+                wfd.getResult()
+
+            for n in added_names:
+                builder = Builder(n)
+                self.builders[n] = builder
+
+                builder.botmaster = self
+                builder.master = self.master
+                builder.setServiceParent(self)
+
+        self.builderNames = self.builders.keys()
+
+        metrics.MetricCountEvent.log("num_builders",
+                len(self.builders), absolute=True)
+
+        timer.stop()
+
 
     def stopService(self):
         if self.buildrequest_sub:
@@ -480,7 +456,7 @@ class BuildRequestDistributor(service.Service):
                      if n in builders_dict ]
 
         # find a sorting function
-        sorter = self.botmaster.prioritizeBuilders
+        sorter = self.master.config.prioritizeBuilders
         if not sorter:
             sorter = self._defaultSorter
 
@@ -560,7 +536,15 @@ class BuildRequestDistributor(service.Service):
 
 class DuplicateSlaveArbitrator(object):
     """Utility class to arbitrate the situation when a new slave connects with
-    the name of an existing, connected slave"""
+    the name of an existing, connected slave
+
+    @ivar buildslave: L{buildbot.process.slavebuilder.AbstractBuildSlave}
+    instance
+    @ivar old_remote: L{RemoteReference} to the old slave
+    @ivar new_remote: L{RemoteReference} to the new slave
+    """
+    _reactor = reactor # for testing
+
     # There are several likely duplicate slave scenarios in practice:
     #
     # 1. two slaves are configured with the same username/password
@@ -579,63 +563,69 @@ class DuplicateSlaveArbitrator(object):
     """Timeout for pinging the old slave.  Set this to something quite long, as
     a very busy slave (e.g., one sending a big log chunk) may take a while to
     return a ping.
-
-    @ivar old_slave: L{buildbot.process.slavebuilder.AbstractSlaveBuilder}
-    instance
     """
 
-    def __init__(self, slave):
-        self.old_slave = slave
+    def __init__(self, buildslave):
+        self.buildslave = buildslave
+        self.old_remote = self.buildslave.slave
 
     def getPerspective(self, mind, slavename):
-        self.new_slave_mind = mind
+        self.new_remote = mind
+        self.ping_old_slave_done = False
+        self.old_slave_connected = True
+        self.ping_new_slave_done = False
 
-        old_tport = self.old_slave.slave.broker.transport
-        new_tport = mind.broker.transport
-        log.msg("duplicate slave %s; delaying new slave (%s) and pinging old (%s)" % 
-                (self.old_slave.slavename, new_tport.getPeer(), old_tport.getPeer()))
+        old_tport = self.old_remote.broker.transport
+        new_tport = self.new_remote.broker.transport
+        log.msg("duplicate slave %s; delaying new slave (%s) and pinging old "
+                "(%s)" % (self.buildslave.slavename, new_tport.getPeer(),
+                          old_tport.getPeer()))
 
         # delay the new slave until we decide what to do with it
-        self.new_slave_d = defer.Deferred()
+        d = self.new_slave_d = defer.Deferred()
 
         # Ping the old slave.  If this kills it, then we can allow the new
         # slave to connect.  If this does not kill it, then we disconnect
         # the new slave.
-        self.ping_old_slave_done = False
-        self.old_slave_connected = True
         self.ping_old_slave(new_tport.getPeer())
 
         # Print a message on the new slave, if possible.
-        self.ping_new_slave_done = False
         self.ping_new_slave()
 
-        return self.new_slave_d
+        return d
 
     def ping_new_slave(self):
-        d = self.new_slave_mind.callRemote("print",
-            "master already has a connection named '%s' - checking its liveness"
-                        % self.old_slave.slavename)
+        d = defer.maybeDeferred(lambda :
+            self.new_remote.callRemote("print", "master already has a "
+                        "connection named '%s' - checking its liveness"
+                        % self.buildslave.slavename))
         def done(_):
-            # failure or success, doesn't matter
+            # failure or success, doesn't matter - the ping is done.
             self.ping_new_slave_done = True
             self.maybe_done()
         d.addBoth(done)
 
     def ping_old_slave(self, new_peer):
-        # set a timer on this ping, in case the network is bad.  TODO: a timeout
-        # on the ping itself is not quite what we want.  If there is other data
-        # flowing over the PB connection, then we should keep waiting.  Bug #1703
+        # set a timer on this ping, in case the network is bad.  TODO: a
+        # timeout on the ping itself is not quite what we want.  If there is
+        # other data flowing over the PB connection, then we should keep
+        # waiting.  Bug #1703
         def timeout():
             self.ping_old_slave_timeout = None
             self.ping_old_slave_timed_out = True
             self.old_slave_connected = False
             self.ping_old_slave_done = True
             self.maybe_done()
-        self.ping_old_slave_timeout = reactor.callLater(self.PING_TIMEOUT, timeout)
+        self.ping_old_slave_timeout = self._reactor.callLater(
+                                    self.PING_TIMEOUT, timeout)
         self.ping_old_slave_timed_out = False
 
-        d = self.old_slave.slave.callRemote("print",
-            "master got a duplicate connection from %s; keeping this one" % new_peer)
+        # call this in maybeDeferred because callRemote tends to raise
+        # exceptions instead of returning Failures
+        d = defer.maybeDeferred(lambda :
+            self.old_remote.callRemote("print",
+                "master got a duplicate connection from %s; keeping this one"
+                                        % new_peer))
 
         def clear_timeout(r):
             if self.ping_old_slave_timeout:
@@ -647,17 +637,14 @@ class DuplicateSlaveArbitrator(object):
         def old_gone(f):
             if self.ping_old_slave_timed_out:
                 return # ignore after timeout
-            f.trap(pb.PBConnectionLost)
+            f.trap(pb.PBConnectionLost, pb.DeadReferenceError)
             log.msg(("connection lost while pinging old slave '%s' - " +
-                     "keeping new slave") % self.old_slave.slavename)
+                     "keeping new slave") % self.buildslave.slavename)
             self.old_slave_connected = False
         d.addErrback(old_gone)
 
         def other_err(f):
-            if self.ping_old_slave_timed_out:
-                return # ignore after timeout
-            log.msg("unexpected error while pinging old slave; disconnecting it")
-            log.err(f)
+            log.err(f, "unexpected error pinging old slave; disconnecting it")
             self.old_slave_connected = False
         d.addErrback(other_err)
 
@@ -678,29 +665,32 @@ class DuplicateSlaveArbitrator(object):
         else:
             self.start_new_slave()
 
-    def start_new_slave(self, count=20):
-        if not self.new_slave_d:
-            return
-
-        # we need to wait until the old slave has actually disconnected, which
-        # can take a little while -- but don't wait forever!
-        if self.old_slave.isConnected():
-            if self.old_slave.slave:
-                self.old_slave.slave.broker.transport.loseConnection()
-            if count < 0:
-                log.msg("WEIRD: want to start new slave, but the old slave will not disconnect")
-                self.disconnect_new_slave()
-            else:
-                reactor.callLater(0.1, self.start_new_slave, count-1)
+    def start_new_slave(self):
+        # just in case
+        if not self.new_slave_d: # pragma: ignore
             return
 
         d = self.new_slave_d
         self.new_slave_d = None
-        d.callback(self.old_slave)
+
+        if self.buildslave.isConnected():
+            # we need to wait until the old slave has fully detached, which can
+            # take a little while as buffers drain, etc.
+            def detached():
+                d.callback(self.buildslave)
+            self.buildslave.subscribeToDetach(detached)
+            self.old_remote.broker.transport.loseConnection()
+        else: # pragma: ignore
+            # by some unusual timing, it's quite possible that the old slave
+            # has disconnected while the arbitration was going on.  In that
+            # case, we're already done!
+            d.callback(self.buildslave)
 
     def disconnect_new_slave(self):
-        if not self.new_slave_d:
+        # just in case
+        if not self.new_slave_d: # pragma: ignore
             return
+
         d = self.new_slave_d
         self.new_slave_d = None
         log.msg("rejecting duplicate slave with exception")

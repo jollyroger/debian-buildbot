@@ -23,7 +23,7 @@
 import copy
 import os, sys, stat, re, time
 from twisted.python import usage, util, runtime
-from twisted.internet import defer, reactor
+from twisted.internet import defer
 
 from buildbot.interfaces import BuildbotNotRunningError
 
@@ -44,6 +44,9 @@ def in_reactor(f):
         reactor.callWhenRunning(async)
         reactor.run()
         return result[0]
+    wrap.__doc__ = f.__doc__
+    wrap.__name__ = f.__name__
+    wrap._orig = f # for tests
     return wrap
 
 def isBuildmasterDir(dir):
@@ -174,36 +177,6 @@ class MakerBase(OptionsWithOptionsFile):
     def postOptions(self):
         self['basedir'] = os.path.abspath(self['basedir'])
 
-makefile_sample = """# -*- makefile -*-
-
-# This is a simple makefile which lives in a buildmaster
-# directory (next to the buildbot.tac file). It allows you to start/stop the
-# master by doing 'make start' or 'make stop'.
-
-# The 'reconfig' target will tell a buildmaster to reload its config file.
-
-start:
-	twistd --no_save -y buildbot.tac
-
-stop:
-	if [ -e twistd.pid ]; \\
-	then kill `cat twistd.pid`; \\
-	else echo "Nothing to stop."; \\
-	fi
-
-reconfig:
-	if [ -e twistd.pid ]; \\
-	then kill -HUP `cat twistd.pid`; \\
-	else echo "Nothing to reconfig."; \\
-	fi
-
-log:
-	if [ -e twistd.log ]; \\
-	then tail -f twistd.log; \\
-	else echo "Nothing to tail."; \\
-	fi
-"""
-
 class Maker:
     def __init__(self, config):
         self.config = config
@@ -220,7 +193,6 @@ class Maker:
         os.mkdir(self.basedir)
 
     def chdir(self):
-        if not self.quiet: print "chdir", self.basedir
         os.chdir(self.basedir)
 
     def makeTAC(self, contents, secret=False):
@@ -241,37 +213,14 @@ class Maker:
         if secret:
             os.chmod(tacfile, 0600)
 
-    def makefile(self):
-        target = "Makefile.sample"
-        if os.path.exists(target):
-            oldcontents = open(target, "rt").read()
-            if oldcontents == makefile_sample:
-                if not self.quiet:
-                    print "Makefile.sample already exists and is correct"
-                return
-            if not self.quiet:
-                print "replacing Makefile.sample"
-        else:
-            if not self.quiet:
-                print "creating Makefile.sample"
-        f = open(target, "wt")
-        f.write(makefile_sample)
-        f.close()
-
     def sampleconfig(self, source):
         target = "master.cfg.sample"
+        if not self.quiet:
+            print "creating %s" % target
         config_sample = open(source, "rt").read()
-        if os.path.exists(target):
-            oldcontents = open(target, "rt").read()
-            if oldcontents == config_sample:
-                if not self.quiet:
-                    print "master.cfg.sample already exists and is up-to-date"
-                return
-            if not self.quiet:
-                print "replacing master.cfg.sample"
-        else:
-            if not self.quiet:
-                print "creating master.cfg.sample"
+        if self.config['db']:
+            config_sample = config_sample.replace('sqlite:///state.sqlite',
+                                                  self.config['db'])
         f = open(target, "wt")
         f.write(config_sample)
         f.close()
@@ -296,9 +245,21 @@ class Maker:
     def create_db(self):
         from buildbot.db import connector
         from buildbot.master import BuildMaster
-        db = connector.DBConnector(BuildMaster(self.basedir),
-                self.config['db'], basedir=self.basedir)
-        if not self.config['quiet']: print "creating database"
+        from buildbot import config as config_module
+
+        from buildbot import monkeypatches
+        monkeypatches.patch_all()
+
+        # create a master with the default configuration, but with db_url
+        # overridden
+        master_cfg = config_module.MasterConfig()
+        master_cfg.db['db_url'] = self.config['db']
+        master = BuildMaster(self.basedir)
+        master.config = master_cfg
+        db = connector.DBConnector(master, self.basedir)
+        d = db.setup(check_version=False, verbose=not self.config['quiet'])
+        if not self.config['quiet']:
+            print "creating database (%s)" % (master_cfg.db['db_url'],)
         d = db.model.upgrade()
         return d
 
@@ -348,69 +309,8 @@ class Maker:
                                  source)
 
     def check_master_cfg(self, expected_db_url=None):
-        """Check the buildmaster configuration, returning a deferred that
-        fires with an approprate exit status (so 0=success)."""
-        from buildbot.master import BuildMaster
-        from twisted.python import log
-
-        master_cfg = os.path.join(self.basedir, "master.cfg")
-        if not os.path.exists(master_cfg):
-            if not self.quiet:
-                print "No master.cfg found"
-            return defer.succeed(1)
-
-        # side-effects of loading the config file:
-
-        #  for each Builder defined in c['builders'], if the status directory
-        #  didn't already exist, it will be created, and the
-        #  $BUILDERNAME/builder pickle might be created (with a single
-        #  "builder created" event).
-
-        # we put basedir in front of sys.path, because that's how the
-        # buildmaster itself will run, and it is quite common to have the
-        # buildmaster import helper classes from other .py files in its
-        # basedir.
-
-        if sys.path[0] != self.basedir:
-            sys.path.insert(0, self.basedir)
-
-        m = BuildMaster(self.basedir)
-
-        # we need to route log.msg to stdout, so any problems can be seen
-        # there. But if everything goes well, I'd rather not clutter stdout
-        # with log messages. So instead we add a logObserver which gathers
-        # messages and only displays them if something goes wrong.
-        messages = []
-        log.addObserver(messages.append)
-
-        # this will errback if there's something wrong with the config file.
-        # Note that this BuildMaster instance is never started, so it won't
-        # actually do anything with the configuration.
-        d = defer.maybeDeferred(lambda :
-            m.loadConfig(open(master_cfg, "r"), checkOnly=True))
-        def check_db_url(config):
-            if (expected_db_url and 
-                config.get('db_url', 'sqlite:///state.sqlite') != expected_db_url):
-                raise ValueError("c['db_url'] in the config file ('%s') does"
-                            " not match '%s'; please edit the configuration"
-                            " file before upgrading." %
-                                (config['db_url'], expected_db_url))
-        d.addCallback(check_db_url)
-        def cb(_):
-            return 0
-        def eb(f):
-            if not self.quiet:
-                print
-                for m in messages:
-                    print "".join(m['message'])
-                f.printTraceback()
-                print
-                print "An error was detected in the master.cfg file."
-                print "Please correct the problem and run 'buildbot upgrade-master' again."
-                print
-            return 1
-        d.addCallbacks(cb, eb)
-        return d
+        """Check the buildmaster configuration, returning an exit status (so
+        0=success)."""
 
 DB_HELP = """
     The --db string is evaluated to build the DB object, which specifies
@@ -430,8 +330,6 @@ class UpgradeMasterOptions(MakerBase):
         ["replace", "r", "Replace any modified files without confirmation."],
         ]
     optParameters = [
-        ["db", None, "sqlite:///state.sqlite",
-         "which DB to use for scheduler/status state. See below for syntax."],
         ]
 
     def getSynopsis(self):
@@ -451,25 +349,58 @@ class UpgradeMasterOptions(MakerBase):
     .new file (for example, if index.html has been modified, this command
     will create index.html.new). You can then look at the new version and
     decide how to merge its contents into your modified file.
-"""+DB_HELP+"""
+
     When upgrading from a pre-0.8.0 release (which did not use a database),
     this command will create the given database and migrate data from the old
     pickle files into it, then move the pickle files out of the way (e.g. to
-    changes.pck.old). To revert to an older release, rename the pickle files
-    back. When you are satisfied with the new version, you can delete the old
-    pickle files.
+    changes.pck.old).
+
+    When upgrading the database, this command uses the database specified in
+    the master configuration file.  If you wish to use a database other than
+    the default (sqlite), be sure to set that parameter before upgrading.
     """
 
 @in_reactor
 @defer.deferredGenerator
 def upgradeMaster(config):
+    from buildbot import config as config_module
+    from buildbot import monkeypatches
+    import traceback
+
+    monkeypatches.patch_all()
+
     m = Maker(config)
+    basedir = os.path.expanduser(config['basedir'])
+
+    if runtime.platformType != 'win32': # no pids on win32
+        if not config['quiet']: print "checking for running master"
+        pidfile = os.path.join(basedir, 'twistd.pid')
+        if os.path.exists(pidfile):
+            print "'%s' exists - is this master still running?" % (pidfile,)
+            yield 1
+            return
+
+    if not config['quiet']: print "checking master.cfg"
+    try:
+        master_cfg = config_module.MasterConfig.loadConfig(
+                                            basedir, 'master.cfg')
+    except config_module.ConfigErrors, e:
+        print "Errors loading configuration:"
+        for msg in e.errors:
+            print "  " + msg
+        yield 1
+        return
+    except:
+        print "Errors loading configuration:"
+        traceback.print_exc()
+        yield 1
+        return
 
     if not config['quiet']: print "upgrading basedir"
     basedir = os.path.expanduser(config['basedir'])
-    # TODO: check Makefile
     # TODO: check TAC file
     # check web files: index.html, default.css, robots.txt
+    m.chdir()
     m.upgrade_public_html({
             'bg_gradient.jpg' : util.sibpath(__file__, "../status/web/files/bg_gradient.jpg"),
             'default.css' : util.sibpath(__file__, "../status/web/files/default.css"),
@@ -483,30 +414,27 @@ def upgradeMaster(config):
     m.move_if_present(os.path.join(basedir, "public_html/index.html"),
                         os.path.join(basedir, "templates/root.html"))
 
-    if not config['quiet']: print "checking master.cfg"
+    from buildbot.db import connector
+    from buildbot.master import BuildMaster
+
+    if not config['quiet']:
+        print "upgrading database (%s)" % (master_cfg.db['db_url'])
+    master = BuildMaster(config['basedir'])
+    master.config = master_cfg
+    db = connector.DBConnector(master, basedir=config['basedir'])
+
     wfd = defer.waitForDeferred(
-            m.check_master_cfg(expected_db_url=config['db']))
+            db.setup(check_version=False, verbose=not config['quiet']))
     yield wfd
-    rc = wfd.getResult()
+    wfd.getResult()
 
-    if rc == 0:
-        from buildbot.db import connector
-        from buildbot.master import BuildMaster
+    wfd = defer.waitForDeferred(
+            db.model.upgrade())
+    yield wfd
+    wfd.getResult()
 
-        if not config['quiet']: print "upgrading database"
-        db = connector.DBConnector(BuildMaster(config['basedir']),
-                            config['db'],
-                            basedir=config['basedir'])
-
-        wfd = defer.waitForDeferred(
-                db.model.upgrade())
-        yield wfd
-        wfd.getResult()
-
-        if not config['quiet']: print "upgrade complete"
-        yield 0
-    else:
-        yield rc
+    if not config['quiet']: print "upgrade complete"
+    yield 0
 
 
 class MasterOptions(MakerBase):
@@ -619,7 +547,6 @@ def createMaster(config):
           'robots.txt' : util.sibpath(__file__, "../status/web/files/robots.txt"),
           'favicon.ico' : util.sibpath(__file__, "../status/web/files/favicon.ico"),
       })
-    m.makefile()
     d = m.create_db()
 
     def print_status(r):
@@ -813,10 +740,11 @@ class SendChangeOptions(OptionsWithOptionsFile):
         ("master", "m", None,
          "Location of the buildmaster's PBListener (host:port)"),
         # deprecated in 0.8.3; remove in 0.8.5 (bug #1711)
-        ("username", "u", None, "deprecated name for --who"),
         ("auth", "a", None, "Authentication token - username:password, or prompt for password"),
         ("who", "W", None, "Author of the commit"),
         ("repository", "R", '', "Repository specifier"),
+        ("vc", "s", None, "The VC system in use, one of: cvs, svn, darcs, hg, "
+                           "bzr, git, mtn, p4"),
         ("project", "P", '', "Project specifier"),
         ("branch", "b", None, "Branch specifier"),
         ("category", "C", None, "Category of repository"),
@@ -836,10 +764,9 @@ class SendChangeOptions(OptionsWithOptionsFile):
     buildbotOptions = [
         [ 'master', 'master' ],
         [ 'who', 'who' ],
-        # deprecated in 0.8.3; remove in 0.8.5 (bug #1711)
-        [ 'username', 'username' ],
         [ 'branch', 'branch' ],
         [ 'category', 'category' ],
+        [ 'vc', 'vc' ],
     ]
 
     def getSynopsis(self):
@@ -847,7 +774,7 @@ class SendChangeOptions(OptionsWithOptionsFile):
     def parseArgs(self, *args):
         self['files'] = args
     def opt_property(self, property):
-        name,value = property.split(':')
+        name,value = property.split(':', 1)
         self['properties'][name] = value
 
 
@@ -858,9 +785,6 @@ def sendchange(config, runReactor=False):
 
     encoding = config.get('encoding', 'utf8')
     who = config.get('who')
-    if not who and config.get('username'):
-        print "NOTE: --username/-u is deprecated: use --who/-W'"
-        who = config.get('username')
     auth = config.get('auth')
     master = config.get('master')
     branch = config.get('branch')
@@ -868,6 +792,7 @@ def sendchange(config, runReactor=False):
     revision = config.get('revision')
     properties = config.get('properties', {})
     repository = config.get('repository', '')
+    vc = config.get('vc', None)
     project = config.get('project', '')
     revlink = config.get('revlink', '')
     if config.get('when'):
@@ -889,6 +814,10 @@ def sendchange(config, runReactor=False):
 
     files = config.get('files', ())
 
+    vcs = ['cvs', 'svn', 'darcs', 'hg', 'bzr', 'git', 'mtn', 'p4', None]
+    assert vc in vcs, "vc must be 'cvs', 'svn', 'darcs', 'hg', 'bzr', " \
+        "'git', 'mtn', or 'p4'"
+
     # fix up the auth with a password if none was given
     if not auth:
         auth = 'change:changepw'
@@ -903,10 +832,11 @@ def sendchange(config, runReactor=False):
 
     s = sendchange.Sender(master, auth, encoding=encoding)
     d = s.send(branch, revision, comments, files, who=who, category=category, when=when,
-               properties=properties, repository=repository, project=project,
+               properties=properties, repository=repository, vc=vc, project=project,
                revlink=revlink)
 
     if runReactor:
+        from twisted.internet import reactor
         status = [True]
         def printSuccess(_):
             print "change sent successfully"
@@ -926,6 +856,10 @@ class ForceOptions(OptionsWithOptionsFile):
         ["branch", None, None, "which branch to build"],
         ["revision", None, None, "which revision to build"],
         ["reason", None, None, "the reason for starting the build"],
+        ["props", None, None,
+         "A set of properties made available in the build environment, "
+         "format is --properties=prop1=value1,prop2=value2,.. "
+         "option can be specified multiple times."],
         ]
 
     def parseArgs(self, *args):
@@ -958,6 +892,8 @@ class TryOptions(OptionsWithOptionsFile):
          "Password for PB authentication"],
         ["who", "w", None,
          "Who is responsible for the try build"],
+        ["comment", "C", None,
+         "A comment which can be used in notifications for this build"],
 
         ["diff", None, None,
          "Filename of a patch to use instead of scanning a local tree. "
@@ -982,7 +918,8 @@ class TryOptions(OptionsWithOptionsFile):
          "Run the trial build on this Builder. Can be used multiple times."],
         ["properties", None, None,
          "A set of properties made available in the build environment, "
-         "format:prop1=value1,prop2=value2..."],
+         "format is --properties=prop1=value1,prop2=value2,.. "
+         "option can be specified multiple times."],
 
         ["topfile", None, None,
          "Name of a file at the top of the tree, used to find the top. "
@@ -1015,17 +952,17 @@ class TryOptions(OptionsWithOptionsFile):
         [ 'try_host', 'host' ],
         [ 'try_username', 'username' ],
         [ 'try_jobdir', 'jobdir' ],
-        [ 'try_password', 'passwd' ],
+        [ 'try_passwd', 'passwd' ],
         [ 'try_master', 'master' ],
         [ 'try_who', 'who' ],
+        [ 'try_comment', 'comment' ],
         #[ 'try_wait', 'wait' ], <-- handled in postOptions
-        [ 'try_masterstatus', 'masterstatus' ],
+        #[ 'try_quiet', 'quiet' ], <-- handled in postOptions
+
         # Deprecated command mappings from the quirky old days:
-        [ 'try_topdir', 'try-topdir' ],
-        [ 'try_topfile', 'try-topfile' ],
-        [ 'try_host', 'tryhost' ],
-        [ 'try_dir', 'trydir' ],        # replaced by try_jobdir/jobdir
-        [ 'masterstatus', 'master' ],   # replaced by try_masterstatus/masterstatus
+        [ 'try_masterstatus', 'master' ],
+        [ 'try_dir', 'jobdir' ],
+        [ 'try_password', 'passwd' ],
     ]
 
     def __init__(self):
@@ -1038,13 +975,10 @@ class TryOptions(OptionsWithOptionsFile):
 
     def opt_properties(self, option):
         # We need to split the value of this option into a dictionary of properties
-        properties = {}
         propertylist = option.split(",")
         for i in range(0,len(propertylist)):
-            print propertylist[i]
-            splitproperty = propertylist[i].split("=")
-            properties[splitproperty[0]] = splitproperty[1]
-        self['properties'] = properties
+            splitproperty = propertylist[i].split("=", 1)
+            self['properties'][splitproperty[0]] = splitproperty[1]
 
     def opt_patchlevel(self, option):
         self['patchlevel'] = int(option)
@@ -1060,6 +994,10 @@ class TryOptions(OptionsWithOptionsFile):
             self['wait'] = True
         if opts.get('try_quiet', False):
             self['quiet'] = True
+        # get the global 'masterstatus' option if it's set and no master
+        # was specified otherwise
+        if not self['master']:
+            self['master'] = opts.get('masterstatus', None)
 
 def doTry(config):
     from buildbot.clients import tryclient
@@ -1119,29 +1057,182 @@ class CheckConfigOptions(OptionsWithOptionsFile):
             self['configFile'] = 'master.cfg'
 
 
-@in_reactor
 def doCheckConfig(config):
     from buildbot.scripts.checkconfig import ConfigLoader
     quiet = config.get('quiet')
     configFileName = config.get('configFile')
 
     if os.path.isdir(configFileName):
+        os.chdir(configFileName)
         cl = ConfigLoader(basedir=configFileName)
     else:
         cl = ConfigLoader(configFileName=configFileName)
 
-    d = cl.load()
+    return cl.load(quiet=quiet)
 
-    def cb(r):
-        if not quiet:
-            print "Config file is good!"
-        return True
-    def eb(f):
-        if not quiet:
-            f.printTraceback()
-        return False
-    d.addCallbacks(cb, eb)
 
+class UserOptions(OptionsWithOptionsFile):
+    optParameters = [
+        ["master", "m", None,
+         "Location of the buildmaster's PBListener (host:port)"],
+        ["username", "u", None,
+         "Username for PB authentication"],
+        ["passwd", "p", None,
+         "Password for PB authentication"],
+        ["op", None, None,
+         "User management operation: add, remove, update, get"],
+        ["bb_username", None, None,
+         "Username to set for a given user. Only availabe on 'update', "
+         "and bb_password must be given as well."],
+        ["bb_password", None, None,
+         "Password to set for a given user. Only availabe on 'update', "
+         "and bb_username must be given as well."],
+        ["ids", None, None,
+         "User's identifiers, used to find users in 'remove' and 'get' "
+         "Can be specified multiple times (--ids=id1,id2,id3)"],
+        ["info", None, None,
+         "User information in the form: --info=type=value,type=value,.. "
+         "Used in 'add' and 'update', can be specified multiple times.  "
+         "Note that 'update' requires --info=id:type=value..."]
+    ]
+    buildbotOptions = [
+        [ 'master', 'master' ],
+        [ 'user_master', 'master' ],
+        [ 'user_username', 'username' ],
+        [ 'user_passwd', 'passwd' ],
+        ]
+
+    def __init__(self):
+        OptionsWithOptionsFile.__init__(self)
+        self['ids'] = []
+        self['info'] = []
+
+    def opt_ids(self, option):
+        id_list = option.split(",")
+        self['ids'].extend(id_list)
+
+    def opt_info(self, option):
+        # splits info into type/value dictionary, appends to info
+        info_list = option.split(",")
+        info_elem = {}
+
+        if len(info_list) == 1 and '=' not in info_list[0]:
+            info_elem["identifier"] = info_list[0]
+            self['info'].append(info_elem)
+        else:
+            for i in range(0, len(info_list)):
+                split_info = info_list[i].split("=", 1)
+
+                # pull identifier from update --info
+                if ":" in split_info[0]:
+                    split_id = split_info[0].split(":")
+                    info_elem["identifier"] = split_id[0]
+                    split_info[0] = split_id[1]
+
+                info_elem[split_info[0]] = split_info[1]
+            self['info'].append(info_elem)
+
+    def getSynopsis(self):
+        return "Usage:    buildbot user [options]"
+
+    longdesc = """
+    Currently implemented types for --info= are:\n
+    git, svn, hg, cvs, darcs, bzr, email
+    """
+
+def users_client(config, runReactor=False):
+    from buildbot.clients import usersclient
+    from buildbot.process.users import users    # for srcs, encrypt
+
+    # accepted attr_types by `buildbot user`, in addition to users.srcs
+    attr_types = ['identifier', 'email']
+
+    master = config.get('master')
+    assert master, "you must provide the master location"
+    try:
+        master, port = master.split(":")
+        port = int(port)
+    except:
+        raise AssertionError("master must have the form 'hostname:port'")
+
+    op = config.get('op')
+    assert op, "you must specify an operation: add, remove, update, get"
+    if op not in ['add', 'remove', 'update', 'get']:
+        raise AssertionError("bad op %r, use 'add', 'remove', 'update', "
+                             "or 'get'" % op)
+
+    username = config.get('username')
+    passwd = config.get('passwd')
+    assert username and passwd, "A username and password pair must be given"
+
+    bb_username = config.get('bb_username')
+    bb_password = config.get('bb_password')
+    if bb_username or bb_password:
+        if op != 'update':
+            raise AssertionError("bb_username and bb_password only work "
+                                 "with update")
+        if not bb_username or not bb_password:
+            raise AssertionError("Must specify both bb_username and "
+                                 "bb_password or neither.")
+
+        bb_password = users.encrypt(bb_password)
+
+    # check op and proper args
+    info = config.get('info')
+    ids = config.get('ids')
+
+    # check for erroneous args
+    if not info and not ids:
+        raise AssertionError("must specify either --ids or --info")
+    if info and ids:
+        raise AssertionError("cannot use both --ids and --info, use "
+                         "--ids for 'remove' and 'get', --info "
+                         "for 'add' and 'update'")
+
+    if op == 'add' or op == 'update':
+        if ids:
+            raise AssertionError("cannot use --ids with 'add' or 'update'")
+        if op == 'update':
+            for user in info:
+                if 'identifier' not in user:
+                    raise ValueError("no ids found in update info, use: "
+                                     "--info=id:type=value,type=value,..")
+        if op == 'add':
+            for user in info:
+                if 'identifier' in user:
+                    raise ValueError("id found in add info, use: "
+                                     "--info=type=value,type=value,..")
+    if op == 'remove' or op == 'get':
+        if info:
+            raise AssertionError("cannot use --info with 'remove' or 'get'")
+
+    # find identifier if op == add
+    if info:
+        # check for valid types
+        for user in info:
+            for attr_type in user:
+                if attr_type not in users.srcs + attr_types:
+                    raise ValueError("Type not a valid attr_type, must be in: "
+                                     "%r" % (users.srcs + attr_types))
+
+            if op == 'add':
+                user['identifier'] = user.values()[0]
+
+    uc = usersclient.UsersClient(master, username, passwd, port)
+    d = uc.send(op, bb_username, bb_password, ids, info)
+
+    if runReactor:
+        from twisted.internet import reactor
+        status = [True]
+        def printSuccess(res):
+            print res
+        def failed(f):
+            status[0] = False
+            print "user op NOT sent - something went wrong: " + str(f)
+        d.addCallbacks(printSuccess, failed)
+        d.addBoth(lambda _ : reactor.stop())
+        reactor.run()
+        return status[0]
     return d
 
 class Options(usage.Options):
@@ -1182,6 +1273,9 @@ class Options(usage.Options):
 
         ['checkconfig', None, CheckConfigOptions,
          "test the validity of a master.cfg config file"],
+
+        ['user', None, UserOptions,
+         "Manage users in buildbot's database"]
 
         # TODO: 'watch'
         ]
@@ -1254,6 +1348,9 @@ def run():
         doTryServer(so)
     elif command == "checkconfig":
         if not doCheckConfig(so):
+            sys.exit(1)
+    elif command == "user":
+        if not users_client(so, True):
             sys.exit(1)
     sys.exit(0)
 

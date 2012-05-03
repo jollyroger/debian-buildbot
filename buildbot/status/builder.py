@@ -15,7 +15,6 @@
 
 
 import weakref
-import gc
 import os, re, itertools
 from cPickle import load, dump
 
@@ -58,23 +57,14 @@ class BuilderStatus(styles.Versioned):
     persistenceVersion = 1
     persistenceForgets = ( 'wasUpgraded', )
 
-    # these limit the amount of memory we consume, as well as the size of the
-    # main Builder pickle. The Build and LogFile pickles on disk must be
-    # handled separately.
-    buildCacheSize = 15
-    eventHorizon = 50 # forget events beyond this
-
-    # these limit on-disk storage
-    logHorizon = 40 # forget logs in steps in builds beyond this
-    buildHorizon = 100 # forget builds beyond this
-
     category = None
     currentBigState = "offline" # or idle/waiting/interlocked/building
     basedir = None # filled in by our parent
 
-    def __init__(self, buildername, category=None):
+    def __init__(self, buildername, category, master):
         self.name = buildername
         self.category = category
+        self.master = master
 
         self.slavenames = []
         self.events = []
@@ -88,10 +78,6 @@ class BuilderStatus(styles.Versioned):
         self.watchers = []
         self.buildCache = weakref.WeakValueDictionary()
         self.buildCache_LRU = []
-        self.logCompressionLimit = False # default to no compression for tests
-        self.logCompressionMethod = "bz2"
-        self.logMaxSize = None # No default limit
-        self.logMaxTailSize = None # No tail buffering
 
     # persistence
 
@@ -113,6 +99,7 @@ class BuilderStatus(styles.Versioned):
         del d['basedir']
         del d['status']
         del d['nextBuildNumber']
+        del d['master']
         return d
 
     def __setstate__(self, d):
@@ -126,12 +113,7 @@ class BuilderStatus(styles.Versioned):
         self.slavenames = []
         # self.basedir must be filled in by our parent
         # self.status must be filled in by our parent
-
-    def reconfigFromBuildmaster(self, buildmaster):
-        # Note that we do not hang onto the buildmaster, since this object
-        # gets pickled and unpickled.
-        if buildmaster.buildCacheSize is not None:
-            self.buildCacheSize = buildmaster.buildCacheSize
+        # self.master must be filled in by our parent
 
     def upgradeToVersion1(self):
         if hasattr(self, 'slavename'):
@@ -154,19 +136,6 @@ class BuilderStatus(styles.Versioned):
             self.nextBuildNumber = max(existing_builds) + 1
         else:
             self.nextBuildNumber = 0
-
-    def setLogCompressionLimit(self, lowerLimit):
-        self.logCompressionLimit = lowerLimit
-
-    def setLogCompressionMethod(self, method):
-        assert method in ("bz2", "gz")
-        self.logCompressionMethod = method
-
-    def setLogMaxSize(self, upperLimit):
-        self.logMaxSize = upperLimit
-
-    def setLogMaxTailSize(self, tailSize):
-        self.logMaxTailSize = tailSize
 
     def saveYourself(self):
         for b in self.currentBuilds:
@@ -197,7 +166,8 @@ class BuilderStatus(styles.Versioned):
         self.buildCache[build.number] = build
         if build in self.buildCache_LRU:
             self.buildCache_LRU.remove(build)
-        self.buildCache_LRU = self.buildCache_LRU[-(self.buildCacheSize-1):] + [ build ]
+        cache_size = self.master.config.caches['Builds']
+        self.buildCache_LRU = self.buildCache_LRU[-(cache_size-1):] + [ build ]
         return build
 
     def getBuildByNumber(self, number):
@@ -207,10 +177,13 @@ class BuilderStatus(styles.Versioned):
                 return self.touchBuildCache(b)
 
         # then in the buildCache
-        if number in self.buildCache:
+        try:
+            b = self.buildCache[number]
+        except KeyError:
+            metrics.MetricCountEvent.log("buildCache.misses", 1)
+        else:
             metrics.MetricCountEvent.log("buildCache.hits", 1)
-            return self.touchBuildCache(self.buildCache[number])
-        metrics.MetricCountEvent.log("buildCache.misses", 1)
+            return self.touchBuildCache(b)
 
         # then fall back to loading it from disk
         filename = self.makeBuildFilename(number)
@@ -218,7 +191,7 @@ class BuilderStatus(styles.Versioned):
             log.msg("Loading builder %s's build %d from on-disk pickle"
                 % (self.name, number))
             build = load(open(filename, "rb"))
-            build.builder = self
+            build.setProcessObjects(self, self.master)
 
             # (bug #1068) if we need to upgrade, we probably need to rewrite
             # this pickle, too.  We determine this by looking at the list of
@@ -231,8 +204,6 @@ class BuilderStatus(styles.Versioned):
                 log.msg("re-writing upgraded build pickle")
                 build.saveYourself()
 
-            # handle LogFiles from after 0.5.0 and before 0.6.5
-            build.upgradeLogfiles()
             # check that logfiles exist
             build.checkLogfiles()
             return self.touchBuildCache(build)
@@ -243,21 +214,22 @@ class BuilderStatus(styles.Versioned):
 
     def prune(self, events_only=False):
         # begin by pruning our own events
-        self.events = self.events[-self.eventHorizon:]
+        eventHorizon = self.master.config.eventHorizon
+        self.events = self.events[-eventHorizon:]
 
         if events_only:
             return
 
-        gc.collect()
-
         # get the horizons straight
-        if self.buildHorizon is not None:
+        buildHorizon = self.master.config.buildHorizon
+        if buildHorizon is not None:
             earliest_build = self.nextBuildNumber - self.buildHorizon
         else:
             earliest_build = 0
 
-        if self.logHorizon is not None:
-            earliest_log = self.nextBuildNumber - self.logHorizon
+        logHorizon = self.master.config.logHorizon
+        if logHorizon is not None:
+            earliest_log = self.nextBuildNumber - logHorizon
         else:
             earliest_log = 0
 
@@ -497,7 +469,7 @@ class BuilderStatus(styles.Versioned):
         # build number we've just allocated. This is not quite as important
         # as it was before we switch to determineNextBuildNumber, but I think
         # it may still be useful to have the new build save itself.
-        s = BuildStatus(self, number)
+        s = BuildStatus(self, self.master, number)
         s.waitUntilFinished().addCallback(self._buildFinished)
         return s
 
@@ -507,7 +479,6 @@ class BuilderStatus(styles.Versioned):
         Steps, its ETA, etc), so it is safe to notify our watchers."""
 
         assert s.builder is self # paranoia
-        assert s.number == self.nextBuildNumber - 1
         assert s not in self.currentBuilds
         self.currentBuilds.append(s)
         self.touchBuildCache(s)
@@ -546,66 +517,6 @@ class BuilderStatus(styles.Versioned):
         self.prune() # conserve disk
 
 
-    # waterfall display (history)
-
-    # I want some kind of build event that holds everything about the build:
-    # why, what changes went into it, the results of the build, itemized
-    # test results, etc. But, I do kind of need something to be inserted in
-    # the event log first, because intermixing step events and the larger
-    # build event is fraught with peril. Maybe an Event-like-thing that
-    # doesn't have a file in it but does have links. Hmm, that's exactly
-    # what it does now. The only difference would be that this event isn't
-    # pushed to the clients.
-
-    # publish to clients
-    ## HTML display interface
-
-    def getEventNumbered(self, num):
-        # deal with dropped events, pruned events
-        first = self.events[0].number
-        if first + len(self.events)-1 != self.events[-1].number:
-            log.msg(self,
-                    "lost an event somewhere: [0] is %d, [%d] is %d" % \
-                    (self.events[0].number,
-                     len(self.events) - 1,
-                     self.events[-1].number))
-            for e in self.events:
-                log.msg("e[%d]: " % e.number, e)
-            return None
-        offset = num - first
-        log.msg(self, "offset", offset)
-        try:
-            return self.events[offset]
-        except IndexError:
-            return None
-
-    ## Persistence of Status
-    def loadYourOldEvents(self):
-        if hasattr(self, "allEvents"):
-            # first time, nothing to get from file. Note that this is only if
-            # the Application gets .run() . If it gets .save()'ed, then the
-            # .allEvents attribute goes away in the initial __getstate__ and
-            # we try to load a non-existent file.
-            return
-        self.allEvents = self.loadFile("events", [])
-        if self.allEvents:
-            self.nextEventNumber = self.allEvents[-1].number + 1
-        else:
-            self.nextEventNumber = 0
-    def saveYourOldEvents(self):
-        self.saveFile("events", self.allEvents)
-
-    ## clients
-
-    def addClient(self, client):
-        if client not in self.subscribers:
-            self.subscribers.append(client)
-            self.sendCurrentActivityBig(client)
-            client.newEvent(self.currentSmall)
-    def removeClient(self, client):
-        if client in self.subscribers:
-            self.subscribers.remove(client)
-
     def asDict(self):
         result = {}
         # Constant
@@ -613,6 +524,9 @@ class BuilderStatus(styles.Versioned):
         result['basedir'] = os.path.basename(self.basedir)
         result['category'] = self.category
         result['slaves'] = self.slavenames
+        result['schedulers'] = [ s.name
+                for s in self.status.master.allSchedulers()
+                if self.name in s.builderNames ]
         #result['url'] = self.parent.getURLForThing(self)
         # TODO(maruel): Add cache settings? Do we care?
 

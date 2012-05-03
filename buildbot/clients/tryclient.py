@@ -335,33 +335,35 @@ def ns(s):
     return "%d:%s," % (len(s), s)
 
 def createJobfile(bsid, branch, baserev, patchlevel, diff, repository, 
-                  project, who, builderNames):
-    job = None
-    if who:
-        job = ""
-        job += ns("3")
-        job += ns(bsid)
-        job += ns(branch)
-        job += ns(str(baserev))
-        job += ns("%d" % patchlevel)
-        job += ns(diff)
-        job += ns(repository)
-        job += ns(project)
-        job += ns(who)
-        for bn in builderNames:
-            job += ns(bn)
+                  project, who, comment, builderNames):
+    
+    job = ""
+    
+    #Determine job file version from provided arguments
+    if comment:
+        version = 4
+    elif who:
+        version = 3
     else:
-        job = ""
-        job += ns("2")
-        job += ns(bsid)
-        job += ns(branch)
-        job += ns(str(baserev))
-        job += ns("%d" % patchlevel)
-        job += ns(diff)
-        job += ns(repository)
-        job += ns(project)
-        for bn in builderNames:
-            job += ns(bn)
+        version = 2
+    
+    job += ns(str(version))
+    job += ns(bsid)
+    job += ns(branch)
+    job += ns(str(baserev))
+    job += ns("%d" % patchlevel)
+    job += ns(diff)
+    job += ns(repository)
+    job += ns(project)
+    
+    if (version >= 3):
+        job += ns(who)
+    if (version >= 4):
+        job += ns(comment)
+        
+    for bn in builderNames:
+        job += ns(bn)
+ 
     return job
 
 def getTopdir(topfile, start=None):
@@ -448,6 +450,7 @@ class Try(pb.Referenceable):
         self.builderNames = self.getopt('builders')
         self.project = self.getopt('project', '')
         self.who = self.getopt('who')
+        self.comment = self.getopt('comment')
 
     def getopt(self, config_name, default=None):
         value = self.config.get(config_name)
@@ -483,12 +486,11 @@ class Try(pb.Referenceable):
             vc = self.getopt("vc")
             if vc in ("cvs", "svn"):
                 # we need to find the tree-top
-                topdir = self.getopt("topdir") or self.getopt("try-topdir")
+                topdir = self.getopt("topdir")
                 if topdir:
                     treedir = os.path.expanduser(topdir)
                 else:
-                    topfile = (self.getopt("topfile")
-                               or self.getopt("try-topfile"))
+                    topfile = self.getopt("topfile")
                     treedir = getTopdir(topfile)
             else:
                 treedir = os.getcwd()
@@ -506,7 +508,7 @@ class Try(pb.Referenceable):
             self.jobfile = createJobfile(self.bsid,
                                          ss.branch or "", revspec,
                                          patchlevel, diff, ss.repository,
-                                         self.project, self.who, 
+                                         self.project, self.who, self.comment,
                                          self.builderNames)
 
     def fakeDeliverJob(self):
@@ -526,9 +528,9 @@ class Try(pb.Referenceable):
         # returns a Deferred that fires when the job has been delivered
 
         if self.connect == "ssh":
-            tryhost = self.getopt("host") or self.getopt("tryhost")
+            tryhost = self.getopt("host")
             tryuser = self.getopt("username")
-            trydir = self.getopt("jobdir") or self.getopt("trydir")
+            trydir = self.getopt("jobdir")
 
             argv = ["ssh", "-l", tryuser, tryhost,
                     "buildbot", "tryserver", "--jobdir", trydir]
@@ -541,7 +543,7 @@ class Try(pb.Referenceable):
         if self.connect == "pb":
             user = self.getopt("username")
             passwd = self.getopt("passwd")
-            master = self.getopt("masterstatus") or self.getopt("master")
+            master = self.getopt("master")
             tryhost, tryport = master.split(":")
             tryport = int(tryport)
             f = pb.PBClientFactory()
@@ -554,26 +556,18 @@ class Try(pb.Referenceable):
 
     def _deliverJob_pb(self, remote):
         ss = self.sourcestamp
+        print "Delivering job; comment=", self.comment
 
-        if self.who:
-            d = remote.callRemote("try",
-                                  ss.branch,
-                                  ss.revision,
-                                  ss.patch,
-                                  ss.repository,
-                                  self.project,
-                                  self.builderNames,
-                                  self.who,
-                                  self.config.get('properties', {}))
-        else:
-            d = remote.callRemote("try",
-                                  ss.branch,
-                                  ss.revision,
-                                  ss.patch,
-                                  ss.repository,
-                                  self.project,
-                                  self.builderNames,
-                                  self.config.get('properties', {}))
+        d = remote.callRemote("try",
+                              ss.branch,
+                              ss.revision,
+                              ss.patch,
+                              ss.repository,
+                              self.project,
+                              self.builderNames,
+                              self.who,
+                              self.comment,
+                              self.config.get('properties', {}))
         d.addCallback(self._deliverJob_pb2)
         return d
     def _deliverJob_pb2(self, status):
@@ -598,7 +592,7 @@ class Try(pb.Referenceable):
             return self.running
         # contact the status port
         # we're probably using the ssh style
-        master = self.getopt("masterstatus") or self.getopt("master")
+        master = self.getopt("master")
         host, port = master.split(":")
         port = int(port)
         self.announce("contacting the status port at %s:%d" % (host, port))

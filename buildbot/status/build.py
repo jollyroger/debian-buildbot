@@ -16,14 +16,14 @@
 import os, shutil, re
 from cPickle import dump
 from zope.interface import implements
-from twisted.python import log, runtime
+from twisted.python import log, runtime, components
 from twisted.persisted import styles
 from twisted.internet import reactor, defer
 from buildbot import interfaces, util, sourcestamp
-from buildbot.process.properties import Properties
+from buildbot.process import properties
 from buildbot.status.buildstep import BuildStepStatus
 
-class BuildStatus(styles.Versioned):
+class BuildStatus(styles.Versioned, properties.PropertiesMixin):
     implements(interfaces.IBuildStatus, interfaces.IStatusEvent)
 
     persistenceVersion = 3
@@ -41,6 +41,8 @@ class BuildStatus(styles.Versioned):
     results = None
     slavename = "???"
 
+    set_runtime_properties = True
+
     # these lists/dicts are defined here so that unserialized instances have
     # (empty) values. They are set in __init__ to new objects to make sure
     # each instance gets its own copy.
@@ -49,20 +51,21 @@ class BuildStatus(styles.Versioned):
     finishedWatchers = []
     testResults = {}
 
-    def __init__(self, parent, number):
+    def __init__(self, parent, master, number):
         """
         @type  parent: L{BuilderStatus}
         @type  number: int
         """
         assert interfaces.IBuilderStatus(parent)
         self.builder = parent
+        self.master = master
         self.number = number
         self.watchers = []
         self.updates = {}
         self.finishedWatchers = []
         self.steps = []
         self.testResults = {}
-        self.properties = Properties()
+        self.properties = properties.Properties()
 
     def __repr__(self):
         return "<%s #%s>" % (self.__class__.__name__, self.number)
@@ -74,12 +77,6 @@ class BuildStatus(styles.Versioned):
         @rtype: L{BuilderStatus}
         """
         return self.builder
-
-    def getProperty(self, propname):
-        return self.properties[propname]
-
-    def getProperties(self):
-        return self.properties
 
     def getNumber(self):
         return self.number
@@ -99,6 +96,15 @@ class BuildStatus(styles.Versioned):
 
     def getChanges(self):
         return self.changes
+
+    def getRevisions(self):
+        revs = []
+        for c in self.changes:
+            rev = str(c.revision)
+            if rev > 7:  # for long hashes
+                rev = rev[:7]
+            revs.append(rev)
+        return ", ".join(revs)
 
     def getResponsibleUsers(self):
         return self.blamelist
@@ -181,12 +187,6 @@ class BuildStatus(styles.Versioned):
     def getTestResults(self):
         return self.testResults
 
-    def getTestResultsOrd(self):
-        trs = self.testResults.keys()
-        trs.sort()
-        ret = [ self.testResults[t] for t in trs]
-        return ret
-
     def getLogs(self):
         # TODO: steps should contribute significant logs instead of this
         # hack, which returns every log from every step. The logs should get
@@ -233,13 +233,10 @@ class BuildStatus(styles.Versioned):
         list. Create a BuildStepStatus object to which it can send status
         updates."""
 
-        s = BuildStepStatus(self, len(self.steps))
+        s = BuildStepStatus(self, self.master, len(self.steps))
         s.setName(name)
         self.steps.append(s)
         return s
-
-    def setProperty(self, propname, value, source, runtime=True):
-        self.properties.setProperty(propname, value, source, runtime)
 
     def addTestResult(self, result):
         self.testResults[result.getName()] = result
@@ -353,18 +350,22 @@ class BuildStatus(styles.Versioned):
             # was interrupted. The builder will have a 'shutdown' event, but
             # someone looking at just this build will be confused as to why
             # the last log is truncated.
-        for k in 'builder', 'watchers', 'updates', 'finishedWatchers':
+        for k in [ 'builder', 'watchers', 'updates', 'finishedWatchers',
+                   'master' ]:
             if k in d: del d[k]
         return d
 
     def __setstate__(self, d):
         styles.Versioned.__setstate__(self, d)
-        # self.builder must be filled in by our parent when loading
-        for step in self.steps:
-            step.build = self
         self.watchers = []
         self.updates = {}
         self.finishedWatchers = []
+
+    def setProcessObjects(self, builder, master):
+        self.builder = builder
+        self.master = master
+        for step in self.steps:
+            step.setProcessObjects(self, master)
 
     def upgradeToVersion1(self):
         if hasattr(self, "sourceStamp"):
@@ -387,24 +388,9 @@ class BuildStatus(styles.Versioned):
     def upgradeToVersion3(self):
         # in version 3, self.properties became a Properties object
         propdict = self.properties
-        self.properties = Properties()
+        self.properties = properties.Properties()
         self.properties.update(propdict, "Upgrade from previous version")
         self.wasUpgraded = True
-
-    def upgradeLogfiles(self):
-        # upgrade any LogFiles that need it. This must occur after we've been
-        # attached to our Builder, and after we know about all LogFiles of
-        # all Steps (to get the filenames right).
-        assert self.builder
-        for s in self.steps:
-            for l in s.getLogs():
-                if l.filename:
-                    pass # new-style, log contents are on disk
-                else:
-                    logfilename = self.generateLogfileName(s.name, l.name)
-                    # let the logfile update its .filename pointer,
-                    # transferring its contents onto disk if necessary
-                    l.upgrade(logfilename)
 
     def checkLogfiles(self):
         # check that all logfiles exist, and remove references to any that
@@ -460,5 +446,5 @@ class BuildStatus(styles.Versioned):
             result['currentStep'] = None
         return result
 
-
-
+components.registerAdapter(lambda build_status : build_status.properties,
+        BuildStatus, interfaces.IProperties)

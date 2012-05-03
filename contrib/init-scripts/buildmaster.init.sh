@@ -10,6 +10,9 @@
 # Required-Stop:     $remote_fs
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
+# Short-Description: Buildbot master init script
+# Description:       This file allows running buildbot master instances at
+#                    startup
 ### END INIT INFO
 
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
@@ -112,7 +115,7 @@ function iscallable () { type $1 2>/dev/null | grep -q 'shell function'; }
 function master_op () {
     op=$1 ; mi=$2
 
-    ${MASTER_PREFIXCMD[$1]} \
+    ${MASTER_PREFIXCMD[$mi]} \
     su -s /bin/sh \
     -c "$MASTER_RUNNER $op --quiet ${MASTER_OPTIONS[$mi]} ${MASTER_BASEDIR[$mi]}" \
     - ${MASTER_USER[$mi]}

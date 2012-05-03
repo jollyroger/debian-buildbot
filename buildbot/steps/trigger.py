@@ -18,74 +18,37 @@ from buildbot.process.properties import Properties
 from buildbot.schedulers.triggerable import Triggerable
 from twisted.python import log
 from twisted.internet import defer
+from buildbot import config
 
 class Trigger(LoggingBuildStep):
-    """I trigger a scheduler.Triggerable, to use one or more Builders as if
-    they were a single buildstep (like a subroutine call).
-    """
     name = "trigger"
 
-    renderables = [ 'set_properties', 'schedulerNames', 'sourceStamp' ]
+    renderables = [ 'set_properties', 'schedulerNames', 'sourceStamp',
+                    'updateSourceStamp', 'alwaysUseLatest' ]
 
     flunkOnFailure = True
 
     def __init__(self, schedulerNames=[], sourceStamp=None, updateSourceStamp=None, alwaysUseLatest=False,
                  waitForFinish=False, set_properties={}, copy_properties=[], **kwargs):
-        """
-        Trigger the given schedulers when this step is executed.
-
-        @param schedulerNames: A list of scheduler names that should be
-                               triggered. Schedulers can be specified using
-                               WithProperties, if desired.
-
-        @param sourceStamp: A dict containing the source stamp to use for the
-                            build. Keys must include branch, revision, repository and
-                            project. In addition, patch_body, patch_level, and
-                            patch_subdir can be specified. Only one of
-                            sourceStamp, updateSourceStamp and alwaysUseLatest
-                            can be specified. Any of these can be specified using
-                            WithProperties, if desired.
-
-        @param updateSourceStamp: If True (the default), I will try to give
-                                  the schedulers an absolute SourceStamp for
-                                  their builds, so that a HEAD build will use
-                                  the same revision even if more changes have
-                                  occurred since my build's update step was
-                                  run. If False, I will use the original
-                                  SourceStamp unmodified.
-
-        @param alwaysUseLatest: If False (the default), I will give the
-                                SourceStamp of the current build to the
-                                schedulers (as controled by updateSourceStamp).
-                                If True, I will give the schedulers  an empty
-                                SourceStamp, corresponding to the latest
-                                revision.
-
-        @param waitForFinish: If False (the default), this step will finish
-                              as soon as I've started the triggered
-                              schedulers. If True, I will wait until all of
-                              the triggered schedulers have finished their
-                              builds.
-
-        @param set_properties: A dictionary of properties to set for any
-                               builds resulting from this trigger.  These
-                               properties will override properties set in the
-                               Triggered scheduler's constructor.
-
-        @param copy_properties: a list of property names to copy verbatim
-                                into any builds resulting from this trigger.
-
-        """
-        assert schedulerNames, "You must specify a scheduler to trigger"
-        if sourceStamp and updateSourceStamp:
-            raise ValueError("You can't specify both sourceStamp and updateSourceStamp")
+        if not schedulerNames:
+            config.error(
+                "You must specify a scheduler to trigger")
+        if sourceStamp and (updateSourceStamp is not None):
+            config.error(
+                "You can't specify both sourceStamp and updateSourceStamp")
         if sourceStamp and alwaysUseLatest:
-            raise ValueError("You can't specify both sourceStamp and alwaysUseLatest")
-        if alwaysUseLatest and updateSourceStamp:
-            raise ValueError("You can't specify both alwaysUseLatest and updateSourceStamp")
+            config.error(
+                "You can't specify both sourceStamp and alwaysUseLatest")
+        if alwaysUseLatest and (updateSourceStamp is not None):
+            config.error(
+                "You can't specify both alwaysUseLatest and updateSourceStamp"
+            )
         self.schedulerNames = schedulerNames
         self.sourceStamp = sourceStamp
-        self.updateSourceStamp = updateSourceStamp or not (alwaysUseLatest or sourceStamp)
+        if updateSourceStamp is not None:
+            self.updateSourceStamp = updateSourceStamp
+        else:
+            self.updateSourceStamp = not (alwaysUseLatest or sourceStamp)
         self.alwaysUseLatest = alwaysUseLatest
         self.waitForFinish = waitForFinish
         self.set_properties = set_properties
@@ -102,7 +65,7 @@ class Trigger(LoggingBuildStep):
                                  copy_properties=copy_properties)
 
     def interrupt(self, reason):
-        if self.running:
+        if self.running and not self.ended:
             self.step_status.setText(["interrupted"])
             return self.end(EXCEPTION)
 
@@ -120,7 +83,7 @@ class Trigger(LoggingBuildStep):
         props_to_set.update(self.set_properties, "Trigger")
         for p in self.copy_properties:
             if p not in properties:
-                raise RuntimeError("copy_property '%s' is not set in the triggering build" % p)
+                continue
             props_to_set.setProperty(p, properties[p],
                         "%s (in triggering build)" % properties.getPropertySource(p))
 
@@ -132,7 +95,7 @@ class Trigger(LoggingBuildStep):
         unknown_schedulers = []
         triggered_schedulers = []
 
-        # TODO: don't fire any schedulers if we discover an unknown one
+        # don't fire any schedulers if we discover an unknown one
         for scheduler in self.schedulerNames:
             scheduler = scheduler
             if all_schedulers.has_key(scheduler):
@@ -149,8 +112,17 @@ class Trigger(LoggingBuildStep):
             return self.end(FAILURE)
 
         master = self.build.builder.botmaster.parent # seriously?!
+        
+        def add_sourcestamp_to_set(ss_setid, sourceStamp):
+            d = master.db.sourcestamps.addSourceStamp(
+                    sourcestampsetid = ss_setid,
+                    **sourceStamp)
+            d.addCallback(lambda _ : ss_setid)
+            return d
+
         if self.sourceStamp:
-            d = master.db.sourcestamps.addSourceStamp(**self.sourceStamp)
+            d = master.db.sourcestampsets.addSourceStampSet()
+            d.addCallback(add_sourcestamp_to_set, self.sourceStamp)
         elif self.alwaysUseLatest:
             d = defer.succeed(None)
         else:
@@ -159,36 +131,70 @@ class Trigger(LoggingBuildStep):
                 got = properties.getProperty('got_revision')
                 if got:
                     ss = ss.getAbsoluteSourceStamp(got)
-            d = ss.getSourceStampId(master)
-        def start_builds(ssid):
+            d = ss.getSourceStampSetId(master)
+        def start_builds(ss_setid):
             dl = []
             for scheduler in triggered_schedulers:
                 sch = all_schedulers[scheduler]
-                dl.append(sch.trigger(ssid, set_props=props_to_set))
+                dl.append(sch.trigger(ss_setid, set_props=props_to_set))
             self.step_status.setText(['triggered'] + triggered_schedulers)
 
-            d = defer.DeferredList(dl, consumeErrors=1)
             if self.waitForFinish:
-                return d
+                return defer.DeferredList(dl, consumeErrors=1)
             else:
                 # do something to handle errors
-                d.addErrback(log.err,
+                for d in dl:
+                    d.addErrback(log.err,
                         '(ignored) while invoking Triggerable schedulers:')
                 self.end(SUCCESS)
                 return None
         d.addCallback(start_builds)
 
         def cb(rclist):
-            rc = SUCCESS # (this rc is not the same variable as that above)
+            was_exception = was_failure = False
+            brids = {}
             for was_cb, results in rclist:
-                # TODO: make this algo more configurable
+                if isinstance(results, tuple):
+                    results, some_brids = results
+                    brids.update(some_brids)
+
                 if not was_cb:
-                    rc = EXCEPTION
+                    was_exception = True
                     log.err(results)
-                    break
-                if results == FAILURE:
-                    rc = FAILURE
-            return self.end(rc)
+                    continue
+
+                if results==FAILURE:
+                    was_failure = True
+
+            if was_exception:
+                result = EXCEPTION
+            elif was_failure:
+                result = FAILURE
+            else:
+                result = SUCCESS
+
+            if brids:
+                def add_links(res):
+                    # reverse the dictionary lookup for brid to builder name
+                    brid_to_bn = dict((_brid,_bn) for _bn,_brid in brids.iteritems())
+
+                    for was_cb, builddicts in res:
+                        if was_cb:
+                            for build in builddicts:
+                                bn = brid_to_bn[build['brid']]
+                                num = build['number']
+                                
+                                url = master.status.getURLForBuild(bn, num)
+                                self.step_status.addURL("%s #%d" % (bn,num), url)
+                                
+                    return self.end(result)
+
+                builddicts = [master.db.builds.getBuildsForRequest(br) for br in brids.values()]
+                dl = defer.DeferredList(builddicts, consumeErrors=1)
+                dl.addCallback(add_links)
+                return dl
+
+            return self.end(result)
         def eb(why):
             return self.end(FAILURE)
 

@@ -103,6 +103,13 @@ class ComparableMixin:
                      for name in self.compare_attrs]
         return cmp(self_list, them_list)
 
+def diffSets(old, new):
+    if not isinstance(old, set):
+        old = set(old)
+    if not isinstance(new, set):
+        new = set(new)
+    return old - new, new - old
+
 # Remove potentially harmful characters from builder name if it is to be
 # used as the build dir.
 badchars_map = string.maketrans("\t !#$%&'()*+,./:;<=>?@[\\]^{|}~",
@@ -162,13 +169,16 @@ UTC = UTC()
 
 def epoch2datetime(epoch):
     """Convert a UNIX epoch time to a datetime object, in the UTC timezone"""
-    return datetime.datetime.fromtimestamp(epoch, tz=UTC)
+    if epoch is not None:
+        return datetime.datetime.fromtimestamp(epoch, tz=UTC)
 
 def datetime2epoch(dt):
     """Convert a non-naive datetime object to a UNIX epoch timestamp"""
-    return calendar.timegm(dt.utctimetuple())
+    if dt is not None:
+        return calendar.timegm(dt.utctimetuple())
 
 __all__ = [
     'naturalSort', 'now', 'formatInterval', 'ComparableMixin', 'json',
-    'safeTranslate', 'remove_userpassword', 'LRUCache', 'none_or_str',
-    'NotABranch', 'deferredLocked', 'SerializedInvocation', 'UTC' ]
+    'safeTranslate', 'LRUCache', 'none_or_str',
+    'NotABranch', 'deferredLocked', 'SerializedInvocation', 'UTC',
+    'diffLists' ]

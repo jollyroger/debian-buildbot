@@ -76,6 +76,15 @@ class BuildRequestStatus:
 
     # methods called by our clients
     @defer.deferredGenerator
+    def getBsid(self):
+        wfd = defer.waitForDeferred(
+                self._getBuildRequest())
+        yield wfd
+        br = wfd.getResult()
+
+        yield br.bsid
+
+    @defer.deferredGenerator
     def getSourceStamp(self):
         wfd = defer.waitForDeferred(
                 self._getBuildRequest())
@@ -95,9 +104,9 @@ class BuildRequestStatus:
         wfd = defer.waitForDeferred(
                 self.master.db.builds.getBuildsForRequest(self.brid))
         yield wfd
-        buildnums = wfd.getResult()
+        bdicts = wfd.getResult()
 
-        buildnums.sort()
+        buildnums = sorted([ bdict['number'] for bdict in bdicts ])
 
         for buildnum in buildnums:
             bs = builder.getBuild(buildnum)

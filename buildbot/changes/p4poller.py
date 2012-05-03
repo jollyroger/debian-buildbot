@@ -11,7 +11,8 @@
 # this program; if not, write to the Free Software Foundation, Inc., 51
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
-# Copyright Buildbot Team Members
+# Portions Copyright Buildbot Team Members
+# Portions Copyright 2011 National Instruments
 
 
 # Many thanks to Dave Peticolas for contributing this module
@@ -64,10 +65,14 @@ class P4Source(base.PollingChangeSource, util.ComparableMixin):
     def __init__(self, p4port=None, p4user=None, p4passwd=None,
                  p4base='//', p4bin='p4',
                  split_file=lambda branchfile: (None, branchfile),
-                 pollInterval=60 * 10, histmax=None, pollinterval=-2):
+                 pollInterval=60 * 10, histmax=None, pollinterval=-2,
+                 encoding='utf8', project=None):
         # for backward compatibility; the parameter used to be spelled with 'i'
         if pollinterval != -2:
             pollInterval = pollinterval
+
+        if project is None:
+            project = ''
 
         self.p4port = p4port
         self.p4user = p4user
@@ -76,6 +81,8 @@ class P4Source(base.PollingChangeSource, util.ComparableMixin):
         self.p4bin = p4bin
         self.split_file = split_file
         self.pollInterval = pollInterval
+        self.encoding = encoding
+        self.project = project
 
     def describe(self):
         return "p4source %s %s" % (self.p4port, self.p4base)
@@ -141,6 +148,9 @@ class P4Source(base.PollingChangeSource, util.ComparableMixin):
             yield wfd
             result = wfd.getResult()
 
+            # decode the result from its designated encoding
+            result = result.decode(self.encoding)
+
             lines = result.split('\n')
             # SF#1555985: Wade Brainerd reports a stray ^M at the end of the date
             # field. The rstrip() is intended to remove that.
@@ -178,7 +188,8 @@ class P4Source(base.PollingChangeSource, util.ComparableMixin):
                        comments=comments,
                        revision=str(num),
                        when_timestamp=util.epoch2datetime(when),
-                       branch=branch)
+                       branch=branch,
+                       project=self.project)
                 wfd = defer.waitForDeferred(d)
                 yield wfd
                 wfd.getResult()

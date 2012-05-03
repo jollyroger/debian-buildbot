@@ -16,6 +16,7 @@
 import mock
 from twisted.trial import unittest
 from twisted.internet import defer, task
+from buildbot import config
 from buildbot.test.fake import fakedb
 from buildbot.schedulers import basic
 from buildbot.test.util import scheduler
@@ -26,7 +27,7 @@ class CommonStuffMixin(object):
         kwargs = dict(name="tsched", treeStableTimer=60,
                       builderNames=['tbuild'])
         kwargs.update(kwargs_override)
-        sched = self.attachScheduler(klass(**kwargs), self.SCHEDULERID)
+        sched = self.attachScheduler(klass(**kwargs), self.OBJECTID)
 
         # add a Clock to help checking timing issues
         self.clock = sched._reactor = task.Clock()
@@ -56,7 +57,7 @@ class CommonStuffMixin(object):
 class BaseBasicScheduler(CommonStuffMixin,
         scheduler.SchedulerMixin, unittest.TestCase):
 
-    SCHEDULERID = 244
+    OBJECTID = 244
 
     # a custom subclass since we're testing the base class.  This basically
     # re-implements SingleBranchScheduler, but with more asserts
@@ -69,10 +70,10 @@ class BaseBasicScheduler(CommonStuffMixin,
             self.timer_started = True
             return "xxx"
 
-        def getChangeClassificationsForTimer(self, schedulerid, timer_name):
+        def getChangeClassificationsForTimer(self, objectid, timer_name):
             assert timer_name == "xxx"
-            assert schedulerid == BaseBasicScheduler.SCHEDULERID
-            return self.master.db.schedulers.getChangeClassifications(schedulerid)
+            assert objectid == BaseBasicScheduler.OBJECTID
+            return self.master.db.schedulers.getChangeClassifications(objectid)
 
     def setUp(self):
         self.setUpScheduler()
@@ -83,7 +84,7 @@ class BaseBasicScheduler(CommonStuffMixin,
     # tests
 
     def test_constructor_positional_exception(self):
-        self.assertRaises(AssertionError,
+        self.assertRaises(config.ConfigErrors,
                 lambda : self.Subclass("tsched", "master", 60))
 
     def test_startService_no_treeStableTimer(self):
@@ -92,15 +93,16 @@ class BaseBasicScheduler(CommonStuffMixin,
         sched = self.makeScheduler(self.Subclass, treeStableTimer=None, change_filter=cf,
                                    fileIsImportant=fII)
 
-        self.db.schedulers.fakeClassifications(self.SCHEDULERID, { 20 : True })
+        self.db.schedulers.fakeClassifications(self.OBJECTID, { 20 : True })
 
         d = sched.startService(_returnDeferred=True)
 
         # check that the scheduler has started to consume changes, and the
         # classifications *have* been flushed, since they will not be used
         def check(_):
-            self.assertConsumingChanges(fileIsImportant=fII, change_filter=cf)
-            self.db.schedulers.assertClassifications(self.SCHEDULERID, {})
+            self.assertConsumingChanges(fileIsImportant=fII, change_filter=cf,
+                                        onlyImportant=False)
+            self.db.schedulers.assertClassifications(self.OBJECTID, {})
         d.addCallback(check)
         d.addCallback(lambda _ : sched.stopService())
         return d
@@ -109,10 +111,10 @@ class BaseBasicScheduler(CommonStuffMixin,
         cf = mock.Mock()
         sched = self.makeScheduler(self.Subclass, treeStableTimer=10, change_filter=cf)
 
-        self.db.schedulers.fakeClassifications(self.SCHEDULERID, { 20 : True })
+        self.db.schedulers.fakeClassifications(self.OBJECTID, { 20 : True })
         self.master.db.insertTestData([
             fakedb.Change(changeid=20),
-            fakedb.SchedulerChange(schedulerid=self.SCHEDULERID,
+            fakedb.SchedulerChange(objectid=self.OBJECTID,
                                                 changeid=20, important=1)
         ])
 
@@ -123,8 +125,9 @@ class BaseBasicScheduler(CommonStuffMixin,
         # classification should have been acted on, so the timer should be
         # running
         def check(_):
-            self.assertConsumingChanges(fileIsImportant=None, change_filter=cf)
-            self.db.schedulers.assertClassifications(self.SCHEDULERID, { 20 : True })
+            self.assertConsumingChanges(fileIsImportant=None, change_filter=cf,
+                                        onlyImportant=False)
+            self.db.schedulers.assertClassifications(self.OBJECTID, { 20 : True })
             self.assertTrue(sched.timer_started)
         d.addCallback(check)
         d.addCallback(lambda _ : sched.stopService())
@@ -186,13 +189,13 @@ class BaseBasicScheduler(CommonStuffMixin,
         sched = self.makeScheduler(self.Subclass, treeStableTimer=9, branch='master')
         self.master.db.insertTestData([
             fakedb.Change(changeid=1, branch='master', when_timestamp=1110),
-            fakedb.ChangeFile(changeid=1, file='readme.txt'),
+            fakedb.ChangeFile(changeid=1, filename='readme.txt'),
             fakedb.Change(changeid=2, branch='master', when_timestamp=2220),
-            fakedb.ChangeFile(changeid=2, file='readme.txt'),
+            fakedb.ChangeFile(changeid=2, filename='readme.txt'),
             fakedb.Change(changeid=3, branch='master', when_timestamp=3330),
-            fakedb.ChangeFile(changeid=3, file='readme.txt'),
+            fakedb.ChangeFile(changeid=3, filename='readme.txt'),
             fakedb.Change(changeid=4, branch='master', when_timestamp=4440),
-            fakedb.ChangeFile(changeid=4, file='readme.txt'),
+            fakedb.ChangeFile(changeid=4, filename='readme.txt'),
         ])
         sched.startService()
 
@@ -206,7 +209,7 @@ class BaseBasicScheduler(CommonStuffMixin,
         yield wfd
         wfd.getResult()
         self.assertEqual(self.events, [])
-        self.db.schedulers.assertClassifications(self.SCHEDULERID, { 1 : True })
+        self.db.schedulers.assertClassifications(self.OBJECTID, { 1 : True })
 
         # but another (unimportant) change arrives before then
         self.clock.advance(6) # to 2226
@@ -218,7 +221,7 @@ class BaseBasicScheduler(CommonStuffMixin,
         yield wfd
         wfd.getResult()
         self.assertEqual(self.events, [])
-        self.db.schedulers.assertClassifications(self.SCHEDULERID, { 1 : True, 2 : False })
+        self.db.schedulers.assertClassifications(self.OBJECTID, { 1 : True, 2 : False })
 
         self.clock.advance(3) # to 2229
         self.assertEqual(self.events, [])
@@ -233,7 +236,7 @@ class BaseBasicScheduler(CommonStuffMixin,
         yield wfd
         wfd.getResult()
         self.assertEqual(self.events, [])
-        self.db.schedulers.assertClassifications(self.SCHEDULERID, { 1 : True, 2 : False, 3 : True })
+        self.db.schedulers.assertClassifications(self.OBJECTID, { 1 : True, 2 : False, 3 : True })
 
         self.clock.advance(3) # to 2235
         self.assertEqual(self.events, [])
@@ -241,7 +244,7 @@ class BaseBasicScheduler(CommonStuffMixin,
         # finally, time to start the build!
         self.clock.advance(6) # to 2241
         self.assertEqual(self.events, [ 'B[1,2,3]@2241' ])
-        self.db.schedulers.assertClassifications(self.SCHEDULERID, { })
+        self.db.schedulers.assertClassifications(self.OBJECTID, { })
 
         wfd = defer.waitForDeferred(sched.stopService())
         yield wfd
@@ -251,7 +254,7 @@ class BaseBasicScheduler(CommonStuffMixin,
 class SingleBranchScheduler(CommonStuffMixin,
         scheduler.SchedulerMixin, unittest.TestCase):
 
-    SCHEDULERID = 245
+    OBJECTID = 245
 
     def setUp(self):
         self.setUpScheduler()
@@ -260,7 +263,7 @@ class SingleBranchScheduler(CommonStuffMixin,
         self.tearDownScheduler()
 
     def test_constructor_branch_mandatory(self):
-        self.assertRaises(AssertionError,
+        self.assertRaises(config.ConfigErrors,
                 lambda : basic.SingleBranchScheduler(name="tsched", treeStableTimer=60))
 
     def test_constructor_no_branch_but_filter(self):
@@ -269,7 +272,7 @@ class SingleBranchScheduler(CommonStuffMixin,
                 builderNames=['a','b'], change_filter=mock.Mock())
 
     def test_constructor_branches_forbidden(self):
-        self.assertRaises(AssertionError,
+        self.assertRaises(config.ConfigErrors,
                 lambda : basic.SingleBranchScheduler(name="tsched", treeStableTimer=60, branches='x'))
 
     def test_gotChange_treeStableTimer_important(self):
@@ -292,7 +295,7 @@ class SingleBranchScheduler(CommonStuffMixin,
 class AnyBranchScheduler(CommonStuffMixin,
         scheduler.SchedulerMixin, unittest.TestCase):
 
-    SCHEDULERID = 246
+    OBJECTID = 246
 
     def setUp(self):
         self.setUpScheduler()
@@ -301,7 +304,7 @@ class AnyBranchScheduler(CommonStuffMixin,
         self.tearDownScheduler()
 
     def test_constructor_branch_forbidden(self):
-        self.assertRaises(AssertionError,
+        self.assertRaises(config.ConfigErrors,
                 lambda : basic.SingleBranchScheduler(name="tsched", treeStableTimer=60, branch='x'))
 
     def test_gotChange_treeStableTimer_multiple_branches(self):
@@ -313,7 +316,7 @@ class AnyBranchScheduler(CommonStuffMixin,
 
         def mkch(**kwargs):
             ch = self.makeFakeChange(**kwargs)
-            self.db.changes.fakeAddChange(ch)
+            self.db.changes.fakeAddChangeInstance(ch)
             return ch
 
         d = defer.succeed(None)
