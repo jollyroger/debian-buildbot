@@ -13,10 +13,9 @@
 #
 # Copyright Buildbot Team Members
 
-from zope.interface import implements
 from twisted.trial import unittest
 from twisted.internet import defer
-from buildbot import interfaces
+
 from buildbot.process.build import Build
 from buildbot.process.properties import Properties
 from buildbot.status.results import FAILURE, SUCCESS, WARNINGS, RETRY, EXCEPTION
@@ -35,8 +34,6 @@ class FakeSource:
     revision = "12345"
     repository = None
     project = None
-    patch_info = (None, None)
-    patch = None
 
 class FakeRequest:
     source = FakeSource()
@@ -66,23 +63,12 @@ class FakeMaster:
             self.locks[lockid] = lockid.lockClass(lockid)
         return self.locks[lockid]
 
-class FakeBuildStatus(Mock):
-    implements(interfaces.IProperties)
-
-class FakeBuilderStatus:
-    implements(interfaces.IBuilderStatus)
-
 class TestBuild(unittest.TestCase):
-
-    def setUp(self):
-        r = FakeRequest()
-        self.build = Build([r])
-        self.builder = Mock()
-        self.builder.botmaster = FakeMaster()
-        self.build.setBuilder(self.builder)
-
     def testRunSuccessfulBuild(self):
-        b = self.build
+        r = FakeRequest()
+
+        b = Build([r])
+        b.setBuilder(Mock())
 
         step = Mock()
         step.return_value = step
@@ -90,20 +76,25 @@ class TestBuild(unittest.TestCase):
         b.setStepFactories([(step, {})])
 
         slavebuilder = Mock()
+        status = Mock()
 
-        b.startBuild(FakeBuildStatus(), None, slavebuilder)
+        b.startBuild(status, None, slavebuilder)
 
         self.assertEqual(b.result, SUCCESS)
         self.assert_( ('startStep', (b.remote,), {}) in step.method_calls)
 
     def testStopBuild(self):
-        b = self.build
+        r = FakeRequest()
+
+        b = Build([r])
+        b.setBuilder(Mock())
 
         step = Mock()
         step.return_value = step
         b.setStepFactories([(step, {})])
 
         slavebuilder = Mock()
+        status = Mock()
 
         def startStep(*args, **kw):
             # Now interrupt the build
@@ -111,7 +102,7 @@ class TestBuild(unittest.TestCase):
             return defer.Deferred()
         step.startStep = startStep
 
-        b.startBuild(FakeBuildStatus(), None, slavebuilder)
+        b.startBuild(status, None, slavebuilder)
 
         self.assertEqual(b.result, EXCEPTION)
 
@@ -123,7 +114,10 @@ class TestBuild(unittest.TestCase):
 
         # Create a build with 2 steps, the first one will get interrupted, and
         # the second one is marked with alwaysRun=True
-        b = self.build
+        r = FakeRequest()
+
+        b = Build([r])
+        b.setBuilder(Mock())
 
         step1 = Mock()
         step1.return_value = step1
@@ -137,6 +131,7 @@ class TestBuild(unittest.TestCase):
             ])
 
         slavebuilder = Mock()
+        status = Mock()
 
         def startStep1(*args, **kw):
             # Now interrupt the build
@@ -152,7 +147,7 @@ class TestBuild(unittest.TestCase):
         step2.startStep = startStep2
         step1.stepDone.return_value = False
 
-        d = b.startBuild(FakeBuildStatus(), None, slavebuilder)
+        d = b.startBuild(status, None, slavebuilder)
         def check(ign):
             self.assertEqual(b.result, EXCEPTION)
             self.assert_( ('interrupt', ('stop it',), {}) in step1.method_calls)
@@ -161,9 +156,13 @@ class TestBuild(unittest.TestCase):
         return d
 
     def testBuildLocksAcquired(self):
-        b = self.build
+        r = FakeRequest()
 
+        b = Build([r])
+        b.setBuilder(Mock())
+        b.builder.botmaster = FakeMaster()
         slavebuilder = Mock()
+        status = Mock()
 
         l = SlaveLock('lock')
         claimCount = [0]
@@ -182,16 +181,20 @@ class TestBuild(unittest.TestCase):
         step.startStep.return_value = SUCCESS
         b.setStepFactories([(step, {})])
 
-        b.startBuild(FakeBuildStatus(), None, slavebuilder)
+        b.startBuild(status, None, slavebuilder)
 
         self.assertEqual(b.result, SUCCESS)
         self.assert_( ('startStep', (b.remote,), {}) in step.method_calls)
         self.assertEquals(claimCount[0], 1)
 
     def testBuildWaitingForLocks(self):
-        b = self.build
+        r = FakeRequest()
 
+        b = Build([r])
+        b.setBuilder(Mock())
+        b.builder.botmaster = FakeMaster()
         slavebuilder = Mock()
+        status = Mock()
 
         l = SlaveLock('lock')
         claimCount = [0]
@@ -212,7 +215,7 @@ class TestBuild(unittest.TestCase):
 
         real_lock.claim(Mock(), l.access('counting'))
 
-        b.startBuild(FakeBuildStatus(), None, slavebuilder)
+        b.startBuild(status, None, slavebuilder)
 
         self.assert_( ('startStep', (b.remote,), {}) not in step.method_calls)
         self.assertEquals(claimCount[0], 1)
@@ -220,9 +223,13 @@ class TestBuild(unittest.TestCase):
         self.assert_(b._acquiringLock is not None)
 
     def testStopBuildWaitingForLocks(self):
-        b = self.build
+        r = FakeRequest()
 
+        b = Build([r])
+        b.setBuilder(Mock())
+        b.builder.botmaster = FakeMaster()
         slavebuilder = Mock()
+        status = Mock()
 
         l = SlaveLock('lock')
         lock_access = l.access('counting')
@@ -244,7 +251,7 @@ class TestBuild(unittest.TestCase):
             return retval
         b.acquireLocks = acquireLocks
 
-        b.startBuild(FakeBuildStatus(), None, slavebuilder)
+        b.startBuild(status, None, slavebuilder)
 
         self.assert_( ('startStep', (b.remote,), {}) not in step.method_calls)
         self.assert_(b.currentStep is None)
@@ -252,9 +259,13 @@ class TestBuild(unittest.TestCase):
         self.assert_( ('interrupt', ('stop it',), {}) not in step.method_calls)
 
     def testStopBuildWaitingForStepLocks(self):
-        b = self.build
+        r = FakeRequest()
 
+        b = Build([r])
+        b.setBuilder(Mock())
+        b.builder.botmaster = FakeMaster()
         slavebuilder = Mock()
+        status = Mock()
 
         l = SlaveLock('lock')
         lock_access = l.access('counting')
@@ -282,14 +293,15 @@ class TestBuild(unittest.TestCase):
         step.step_status.addLog().chunkSize = 10
         step.step_status.getLogs.return_value = []
 
-        b.startBuild(FakeBuildStatus(), None, slavebuilder)
+        b.startBuild(status, None, slavebuilder)
 
         self.assertEqual(gotLocks, [True])
         self.assert_(('stepStarted', (), {}) in step.step_status.method_calls)
         self.assertEqual(b.result, EXCEPTION)
 
     def testStepDone(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [SUCCESS]
         b.result = SUCCESS
         b.remote = Mock()
@@ -299,7 +311,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, SUCCESS)
 
     def testStepDoneHaltOnFailure(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = []
         b.result = SUCCESS
         b.remote = Mock()
@@ -310,7 +323,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, FAILURE)
 
     def testStepDoneHaltOnFailureNoFlunkOnFailure(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = []
         b.result = SUCCESS
         b.remote = Mock()
@@ -322,7 +336,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, SUCCESS)
 
     def testStepDoneFlunkOnWarningsFlunkOnFailure(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = []
         b.result = SUCCESS
         b.remote = Mock()
@@ -335,7 +350,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, FAILURE)
 
     def testStepDoneNoWarnOnWarnings(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [SUCCESS]
         b.result = SUCCESS
         b.remote = Mock()
@@ -346,7 +362,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, SUCCESS)
 
     def testStepDoneWarnings(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [SUCCESS]
         b.result = SUCCESS
         b.remote = Mock()
@@ -356,7 +373,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, WARNINGS)
 
     def testStepDoneFail(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [SUCCESS]
         b.result = SUCCESS
         b.remote = Mock()
@@ -366,7 +384,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, FAILURE)
 
     def testStepDoneFailOverridesWarnings(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [SUCCESS, WARNINGS]
         b.result = WARNINGS
         b.remote = Mock()
@@ -376,7 +395,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, FAILURE)
 
     def testStepDoneWarnOnFailure(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [SUCCESS]
         b.result = SUCCESS
         b.remote = Mock()
@@ -388,7 +408,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, WARNINGS)
 
     def testStepDoneFlunkOnWarnings(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [SUCCESS]
         b.result = SUCCESS
         b.remote = Mock()
@@ -399,7 +420,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, FAILURE)
 
     def testStepDoneHaltOnFailureFlunkOnWarnings(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [SUCCESS]
         b.result = SUCCESS
         b.remote = Mock()
@@ -411,7 +433,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, FAILURE)
 
     def testStepDoneWarningsDontOverrideFailure(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [FAILURE]
         b.result = FAILURE
         b.remote = Mock()
@@ -421,7 +444,8 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(b.result, FAILURE)
 
     def testStepDoneRetryOverridesAnythingElse(self):
-        b = self.build
+        r = FakeRequest()
+        b = Build([r])
         b.results = [RETRY]
         b.result = RETRY
         b.remote = Mock()
@@ -433,48 +457,3 @@ class TestBuild(unittest.TestCase):
         terminate = b.stepDone(EXCEPTION, step)
         self.assertEqual(terminate, True)
         self.assertEqual(b.result, RETRY)
-
-
-class TestBuildProperties(unittest.TestCase):
-    """
-    Test that a Build has the necessary L{IProperties} methods, and that they
-    properly delegate to the C{build_status} attribute - so really just a test
-    of the L{IProperties} adapter.
-    """
-
-    def setUp(self):
-        r = FakeRequest()
-        self.build = Build([r])
-        self.build.setStepFactories([])
-        self.builder = Mock()
-        self.build.setBuilder(self.builder)
-        self.build_status = FakeBuildStatus()
-        self.build.startBuild(self.build_status, None, Mock())
-
-    def test_getProperty(self):
-        self.build.getProperty('x')
-        self.build_status.getProperty.assert_called_with('x', None)
-
-    def test_getProperty_default(self):
-        self.build.getProperty('x', 'nox')
-        self.build_status.getProperty.assert_called_with('x', 'nox')
-
-    def test_setProperty(self):
-        self.build.setProperty('n', 'v', 's')
-        self.build_status.setProperty.assert_called_with('n', 'v', 's',
-                                                            runtime=True)
-
-    def test_hasProperty(self):
-        self.build_status.hasProperty.return_value = True
-        self.assertTrue(self.build.hasProperty('p'))
-        self.build_status.hasProperty.assert_called_with('p')
-
-    def test_has_key(self):
-        self.build_status.has_key.return_value = True
-        self.assertTrue(self.build.has_key('p'))
-        # has_key calls through to hasProperty
-        self.build_status.hasProperty.assert_called_with('p')
-
-    def test_render(self):
-        self.build.render("xyz")
-        self.build_status.render.assert_called_with("xyz")

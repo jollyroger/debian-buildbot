@@ -41,7 +41,6 @@ from buildbot.status.web.about import AboutBuildbot
 from buildbot.status.web.authz import Authz
 from buildbot.status.web.auth import AuthFailResource
 from buildbot.status.web.root import RootPage
-from buildbot.status.web.users import UsersResource
 from buildbot.status.web.change_hook import ChangeHookResource
 
 # this class contains the WebStatus class.  Basic utilities are in base.py,
@@ -356,7 +355,7 @@ class WebStatus(service.MultiService):
                       OneLinePerBuild(numbuilds=numbuilds))
         self.putChild("about", AboutBuildbot())
         self.putChild("authfail", AuthFailResource())
-        self.putChild("users", UsersResource())
+
 
     def __repr__(self):
         if self.http_port is None:
@@ -376,11 +375,7 @@ class WebStatus(service.MultiService):
         # parent=None), any remaining HTTP clients of this WebStatus will still
         # be able to get reasonable results.
         self.master = parent
-
-        # set master in IAuth instance
-        if self.authz.auth:
-            self.authz.auth.master = self.master
-
+        
         def either(a,b): # a if a else b for py2.4
             if a:
                 return a
@@ -496,23 +491,6 @@ class WebStatus(service.MultiService):
     # find the requisite object manually, starting at the buildmaster.
     # This is in preparation for removal of the IControl hierarchy
     # entirely.
-
-    def checkConfig(self, otherStatusReceivers):
-        duplicate_webstatus=0
-        for osr in otherStatusReceivers:
-            if isinstance(osr,WebStatus):
-                if osr is self:
-                    continue
-                # compare against myself and complain if the settings conflict
-                if self.http_port == osr.http_port:
-                    if duplicate_webstatus == 0:
-                        duplicate_webstatus = 2
-                    else:
-                        duplicate_webstatus += 1
-
-        if duplicate_webstatus:
-            raise RuntimeError("%d Webstatus objects have same port: %s"
-                    % (duplicate_webstatus, self.http_port))
 
 # resources can get access to the IStatus by calling
 # request.site.buildbot_service.getStatus()

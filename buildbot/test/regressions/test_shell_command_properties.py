@@ -66,7 +66,7 @@ class FakeBuildRequest:
         self.properties = Properties()
 
     def mergeWith(self, others):
-        return self.source
+        return self
 
     def mergeReasons(self, others):
         return self.reason

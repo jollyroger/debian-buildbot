@@ -47,7 +47,6 @@ class AsyncLRUCache(object):
     @ivar hits: cache hits so far
     @ivar refhits: cache misses found in the weak ref dictionary, so far
     @ivar misses: cache misses leading to re-fetches, so far
-    @ivar max_size: maximum allowed size of the cache
     """
 
     __slots__ = ('max_size max_queue miss_fn '
@@ -73,7 +72,7 @@ class AsyncLRUCache(object):
         self.weakrefs = WeakValueDictionary()
         self.concurrent = {}
         self.hits = self.misses = self.refhits = 0
-        self.refcount = defaultdict(lambda : 0)
+        self.refcount = defaultdict(default_factory = lambda : 0)
 
     def get(self, key, **miss_fn_kwargs):
         """
@@ -100,7 +99,7 @@ class AsyncLRUCache(object):
         # utility function to record recent use of this key
         def ref_key():
             queue.append(key)
-            refcount[key] = refcount[key] + 1
+            refcount[key] = refcount.get(key, 0) + 1
 
             # periodically compact the queue by eliminating duplicate keys
             # while preserving order of most recent access.  Note that this
@@ -152,12 +151,11 @@ class AsyncLRUCache(object):
                 cache[key] = result
                 weakrefs[key] = result
 
-                # reference the key once, possibly standing in for multiple
-                # concurrent accesses
-                ref_key()
-
-            self.inv()
             self._purge()
+
+            # reference the key once, possibly standing in for multiple
+            # concurrent accesses
+            ref_key()
 
             # and fire all of the waiting Deferreds
             dlist = concurrent.pop(key)
@@ -184,8 +182,8 @@ class AsyncLRUCache(object):
         queue = self.queue
         max_size = self.max_size
 
-        # purge least recently used entries, using refcount to count entries
-        # that appear multiple times in the queue
+        # purge least recently used entries, using refcount
+        # to count repeatedly-used entries
         while len(cache) > max_size:
             refc = 1
             while refc:
@@ -218,31 +216,3 @@ class AsyncLRUCache(object):
         self.max_size = max_size
         self.max_queue = max_size * self.QUEUE_SIZE_FACTOR
         self._purge()
-
-    def inv(self):
-        """Check invariants and log if they are not met; used for debugging"""
-        global inv_failed
-
-        # the keys of the queue and cache should be identical
-        cache_keys = set(self.cache.keys())
-        queue_keys = set(self.queue)
-        if queue_keys - cache_keys:
-            log.msg("INV: uncached keys in queue:", queue_keys - cache_keys)
-            inv_failed = True
-        if cache_keys - queue_keys:
-            log.msg("INV: unqueued keys in cache:", cache_keys - queue_keys)
-            inv_failed = True
-
-        # refcount should always represent the number of times each key appears
-        # in the queue
-        exp_refcount = dict()
-        for k in self.queue:
-            exp_refcount[k] = exp_refcount.get(k, 0) + 1
-        if exp_refcount != self.refcount:
-            log.msg("INV: refcounts differ:")
-            log.msg(" expected:", sorted(exp_refcount.items()))
-            log.msg("      got:", sorted(self.refcount.items()))
-            inv_failed = True
-
-# for tests
-inv_failed = False

@@ -95,9 +95,9 @@ class BuildRequestStatus:
         wfd = defer.waitForDeferred(
                 self.master.db.builds.getBuildsForRequest(self.brid))
         yield wfd
-        bdicts = wfd.getResult()
+        buildnums = wfd.getResult()
 
-        buildnums = sorted([ bdict['number'] for bdict in bdicts ])
+        buildnums.sort()
 
         for buildnum in buildnums:
             bs = builder.getBuild(buildnum)

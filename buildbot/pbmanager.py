@@ -82,23 +82,15 @@ class Registration(object):
         """
         return self.pbmanager._unregister(self)
 
-    def getPort(self):
-        """
-        Helper method for testing; returns the TCP port used for this
-        registration, even if it was specified as 0 and thus allocated by the
-        OS.
-        """
-        disp = self.pbmanager.dispatchers[self.portstr]
-        return disp.port.getHost().port
 
-
-class Dispatcher(service.Service):
+class Dispatcher(service.MultiService):
     implements(portal.IRealm, checkers.ICredentialsChecker)
 
     credentialInterfaces = [ credentials.IUsernamePassword,
                              credentials.IUsernameHashedPassword ]
 
     def __init__(self, portstr):
+        service.MultiService.__init__(self)
         self.portstr = portstr
         self.users = {}
 
@@ -106,14 +98,19 @@ class Dispatcher(service.Service):
         self.portal = portal.Portal(self)
         self.portal.registerChecker(self)
         self.serverFactory = pb.PBServerFactory(self.portal)
-        self.serverFactory.unsafeTracebacks = True
-        self.port = strports.listen(portstr, self.serverFactory)
+        self.serverFactory.unsafeTraceback = True
+        self.serverPort = strports.service(portstr, self.serverFactory)
+        self.serverPort.setServiceParent(self)
+
+    def getPort(self):
+        # helper method for testing
+        return self.serverPort.getHost().port
+
+    def startService(self):
+        return service.MultiService.startService(self)
 
     def stopService(self):
-        # stop listening on the port when shut down
-        d = defer.maybeDeferred(self.port.stopListening)
-        d.addCallback(lambda _ : service.Service.stopService(self))
-        return d
+        return service.MultiService.stopService(self)
 
     def register(self, username, password, pfactory):
         if debug:

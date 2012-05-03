@@ -49,8 +49,6 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
 
     @ivar patch: tuple (patch level, patch body) or None
 
-    @ivar patch_info: tuple (patch author, patch comment) or None
-
     @ivar changes: tuple of changes that went into this source stamp, sorted by
     number
 
@@ -62,17 +60,16 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
     persistenceVersion = 2
     persistenceForgets = ( 'wasUpgraded', )
 
-    # all seven of these are publicly visible attributes
+    # all six of these are publically visible attributes
     branch = None
     revision = None
     patch = None
-    patch_info = None
     changes = ()
     project = ''
     repository = ''
     ssid = None
 
-    compare_attrs = ('branch', 'revision', 'patch', 'patch_info', 'changes', 'project', 'repository')
+    compare_attrs = ('branch', 'revision', 'patch', 'changes', 'project', 'repository')
 
     implements(interfaces.ISourceStamp)
 
@@ -104,11 +101,8 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         sourcestamp.patch = None
         if ssdict['patch_body']:
             # note that this class does not store the patch_subdir
-            sourcestamp.patch = (ssdict['patch_level'],
-                                 ssdict['patch_body'])
-            sourcestamp.patch_info = (ssdict['patch_author'],
-                                      ssdict['patch_comment'])
-        
+            sourcestamp.patch = (ssdict['patch_level'], ssdict['patch_body'])
+
         if ssdict['changeids']:
             # sort the changeids in order, oldest to newest
             sorted_changeids = sorted(ssdict['changeids'])
@@ -128,10 +122,8 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         return d
 
     def __init__(self, branch=None, revision=None, patch=None,
-                 patch_info=None, changes=None, project='', repository='',
-                 _fromSsdict=False, _ignoreChanges=False):
-        self._getSourceStampId_lock = defer.DeferredLock();
-
+                 changes=None, project='', repository='', _fromSsdict=False,
+                 _ignoreChanges=False):
         # skip all this madness if we're being built from the database
         if _fromSsdict:
             return
@@ -141,7 +133,6 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
             assert int(patch[0]) != -1
         self.branch = branch
         self.patch = patch
-        self.patch_info = patch_info
         self.project = project or ''
         self.repository = repository or ''
         if changes and not _ignoreChanges:
@@ -159,6 +150,7 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
                 revision = str(revision)
 
         self.revision = revision
+        self._getSourceStampId_lock = defer.DeferredLock();
 
     def canBeMergedWith(self, other):
         # this algorithm implements the "compatible" mergeRequests defined in
@@ -202,7 +194,6 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         newsource = SourceStamp(branch=self.branch,
                                 revision=self.revision,
                                 patch=self.patch,
-                                patch_info=self.patch_info,
                                 project=self.project,
                                 repository=self.repository,
                                 changes=changes)
@@ -211,7 +202,6 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
     def getAbsoluteSourceStamp(self, got_revision):
         return SourceStamp(branch=self.branch, revision=got_revision,
                            patch=self.patch, repository=self.repository,
-                           patch_info=self.patch_info,
                            project=self.project, changes=self.changes,
                            _ignoreChanges=True)
 
@@ -243,10 +233,6 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         result['repository'] = self.repository
         return result
 
-    def __setstate__(self, d):
-        styles.Versioned.__setstate__(self, d)
-        self._getSourceStampId_lock = defer.DeferredLock();
-
     def upgradeToVersion1(self):
         # version 0 was untyped; in version 1 and later, types matter.
         if self.branch is not None and not isinstance(self.branch, str):
@@ -273,17 +259,10 @@ class SourceStamp(util.ComparableMixin, styles.Versioned):
         patch_level = None
         if self.patch:
             patch_level, patch_body = self.patch
-            
-        patch_author = None
-        patch_comment = None
-        if self.patch_info:
-            patch_author, patch_comment = self.patch_info
-            
         d = master.db.sourcestamps.addSourceStamp(
                 branch=self.branch, revision=self.revision,
                 repository=self.repository, project=self.project,
                 patch_body=patch_body, patch_level=patch_level,
-                patch_author=patch_author, patch_comment=patch_comment,
                 patch_subdir=None, changeids=[c.number for c in self.changes])
         def set_ssid(ssid):
             self.ssid = ssid

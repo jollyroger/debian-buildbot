@@ -13,7 +13,6 @@
 #
 # Copyright Buildbot Team Members
 
-from twisted.internet import defer
 from buildbot.status.web.auth import IAuth
 
 class Authz(object):
@@ -31,7 +30,6 @@ class Authz(object):
             'cancelPendingBuild',
             'stopChange',
             'cleanShutdown',
-            'showUsersPage',
     ]
 
     def __init__(self,
@@ -77,21 +75,15 @@ class Authz(object):
         if cfg:
             if cfg == 'auth' or callable(cfg):
                 if not self.auth:
-                    return defer.succeed(False)
+                    return False
                 user = request.args.get("username", ["<unknown>"])[0]
                 passwd = request.args.get("passwd", ["<no-password>"])[0]
                 if user == "<unknown>" or passwd == "<no-password>":
-                    return defer.succeed(False)
-
-                d = defer.maybeDeferred(self.auth.authenticate, user, passwd)
-                def check_authenticate(res, cfg, user, *args):
-                    if res:
-                        if callable(cfg) and not cfg(user, *args):
-                            return False
-                        return True
                     return False
-                d.addCallback(check_authenticate, cfg, user, *args)
-                return d
+                if self.auth.authenticate(user, passwd):
+                    if callable(cfg) and not cfg(user, *args):
+                        return False
+                    return True
+                return False
             else:
-                return defer.succeed(True) # anyone can do this..
-        return defer.succeed(False)
+                return True # anyone can do this..

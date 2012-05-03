@@ -16,6 +16,7 @@
 from twisted.python import failure, log
 from twisted.application import service
 from twisted.internet import defer
+from buildbot import util
 from buildbot.process.properties import Properties
 from buildbot.util import ComparableMixin
 from buildbot.changes import changes
@@ -64,7 +65,7 @@ class BaseScheduler(service.MultiService, ComparableMixin):
                   "of Builder names.")
         assert isinstance(builderNames, (list, tuple)), errmsg
         for b in builderNames:
-            assert isinstance(b, basestring), errmsg
+            assert isinstance(b, str), errmsg
         self.builderNames = builderNames
         "list of builder names to start in each buildset"
 
@@ -83,8 +84,8 @@ class BaseScheduler(service.MultiService, ComparableMixin):
 
         # internal variables
         self._change_subscription = None
+        self._state_lock = defer.DeferredLock()
         self._change_consumption_lock = defer.DeferredLock()
-        self._objectid = None
 
     ## service handling
 
@@ -108,54 +109,39 @@ class BaseScheduler(service.MultiService, ComparableMixin):
 
     ## state management
 
-    @defer.deferredGenerator
-    def getState(self, *args, **kwargs):
+    class Thunk: pass
+    def getState(self, key, default=Thunk):
         """
         For use by subclasses; get a named state value from the scheduler's
-        state, defaulting to DEFAULT.
-
-        @param name: name of the value to retrieve
-        @param default: (optional) value to return if C{name} is not present
-        @returns: state value via a Deferred
-        @raises KeyError: if C{name} is not present and no default is given
-        @raises TypeError: if JSON parsing fails
+        state, defaulting to DEFAULT; raises C{KeyError} if default is not
+        given and no value exists.  Scheduler must be started.  Returns the
+        value via a deferred.
         """
-        # get the objectid, if not known
-        if self._objectid is None:
-            wfd = defer.waitForDeferred(
-                self.master.db.state.getObjectId(self.name,
-                                        self.__class__.__name__))
-            yield wfd
-            self._objectid = wfd.getResult()
+        d = self.master.db.schedulers.getState(self.schedulerid)
+        def get_value(state_dict):
+            if key in state_dict:
+                return state_dict[key]
+            if default is BaseScheduler.Thunk:
+                raise KeyError("state key '%s' not found" % (key,))
+            return default
+        d.addCallback(get_value)
+        return d
 
-        wfd = defer.waitForDeferred(
-            self.master.db.state.getState(self._objectid, *args, **kwargs))
-        yield wfd
-        yield wfd.getResult()
-
-    @defer.deferredGenerator
+    @util.deferredLocked('_state_lock')
     def setState(self, key, value):
         """
         For use by subclasses; set a named state value in the scheduler's
-        persistent state.  Note that value must be json-able.
+        persistent state.  Note that value must be json-able. Returns a
+        Deferred.
 
-        @param name: the name of the value to change
-        @param value: the value to set - must be a JSONable object
-        @param returns: Deferred
-        @raises TypeError: if JSONification fails
+        Note that this method is safe if called simultaneously in the same
+        process, although it is not safe between processes.
         """
-        # get the objectid, if not known
-        if self._objectid is None:
-            wfd = defer.waitForDeferred(
-                self.master.db.state.getObjectId(self.name,
-                                        self.__class__.__name__))
-            yield wfd
-            self._objectid = wfd.getResult()
-
-        wfd = defer.waitForDeferred(
-            self.master.db.state.setState(self._objectid, key, value))
-        yield wfd
-        wfd.getResult()
+        d = self.master.db.schedulers.getState(self.schedulerid)
+        def set_value_and_store(state_dict):
+            state_dict[key] = value
+            return self.master.db.schedulers.setState(self.schedulerid, state_dict)
+        d.addCallback(set_value_and_store)
 
     ## status queries
 
@@ -171,8 +157,7 @@ class BaseScheduler(service.MultiService, ComparableMixin):
 
     ## change handling
 
-    def startConsumingChanges(self, fileIsImportant=None, change_filter=None,
-                              onlyImportant=False):
+    def startConsumingChanges(self, fileIsImportant=None, change_filter=None):
         """
         Subclasses should call this method from startService to register to
         receive changes.  The BaseScheduler class will take care of filtering
@@ -186,11 +171,6 @@ class BaseScheduler(service.MultiService, ComparableMixin):
         @param change_filter: a filter to determine which changes are even
         considered by this scheduler, or C{None} to consider all changes
         @type change_filter: L{buildbot.changes.filter.ChangeFilter} instance
-
-        @param onlyImportant: If True, only important changes, as specified by
-        fileIsImportant, will be added to the buildset.
-        @type onlyImportant: boolean
-
         """
         assert fileIsImportant is None or callable(fileIsImportant)
 
@@ -206,8 +186,6 @@ class BaseScheduler(service.MultiService, ComparableMixin):
             if fileIsImportant:
                 try:
                     important = fileIsImportant(change)
-                    if not important and onlyImportant:
-                        return
                 except:
                     log.err(failure.Failure(),
                             'in fileIsImportant check for %s' % change)

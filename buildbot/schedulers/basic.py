@@ -21,16 +21,9 @@ from buildbot.changes import filter, changes
 from buildbot.schedulers import base, dependent
 
 class BaseBasicScheduler(base.BaseScheduler):
-    """
-    @param onlyImportant: If True, only important changes will be added to the
-                          buildset.
-    @type onlyImportant: boolean
-
-    """
 
     compare_attrs = (base.BaseScheduler.compare_attrs +
-                     ('treeStableTimer', 'change_filter', 'fileIsImportant',
-                      'onlyImportant') )
+                     ('treeStableTimer', 'change_filter', 'fileIsImportant') )
 
     _reactor = reactor # for tests
 
@@ -38,7 +31,7 @@ class BaseBasicScheduler(base.BaseScheduler):
     def __init__(self, name, shouldntBeSet=NotSet, treeStableTimer=None,
                 builderNames=None, branch=NotABranch, branches=NotABranch,
                 fileIsImportant=None, properties={}, categories=None,
-                change_filter=None, onlyImportant=False):
+                change_filter=None):
         assert shouldntBeSet is self.NotSet, \
                 "pass arguments to schedulers using keyword arguments"
         if fileIsImportant:
@@ -49,7 +42,6 @@ class BaseBasicScheduler(base.BaseScheduler):
 
         self.treeStableTimer = treeStableTimer
         self.fileIsImportant = fileIsImportant
-        self.onlyImportant = onlyImportant
         self.change_filter = self.getChangeFilter(branch=branch,
                 branches=branches, change_filter=change_filter,
                 categories=categories)
@@ -66,8 +58,7 @@ class BaseBasicScheduler(base.BaseScheduler):
         base.BaseScheduler.startService(self)
 
         d = self.startConsumingChanges(fileIsImportant=self.fileIsImportant,
-                                       change_filter=self.change_filter,
-                                       onlyImportant=self.onlyImportant)
+                                       change_filter=self.change_filter)
 
         # if treeStableTimer is False, then we don't care about classified
         # changes, so get rid of any hanging around from previous
@@ -129,11 +120,8 @@ class BaseBasicScheduler(base.BaseScheduler):
                 return
             if self._stable_timers[timer_name]:
                 self._stable_timers[timer_name].cancel()
-            def fire_timer():
-                d = self.stableTimerFired(timer_name)
-                d.addErrback(log.err, "while firing stable timer")
             self._stable_timers[timer_name] = self._reactor.callLater(
-                    self.treeStableTimer, fire_timer)
+                    self.treeStableTimer, self.stableTimerFired, timer_name)
         d.addCallback(fix_timer)
         return d
 
@@ -237,13 +225,11 @@ class Scheduler(SingleBranchScheduler):
     "alias for SingleBranchScheduler"
     def __init__(self, *args, **kwargs):
         log.msg("WARNING: the name 'Scheduler' is deprecated; use " +
-                "buildbot.schedulers.basic.SingleBranchScheduler instead " +
-                "(note that this may require you to change your import " +
-                "statement)")
+                "SingleBranchScheduler instead")
         SingleBranchScheduler.__init__(self, *args, **kwargs)
 
 
-class AnyBranchScheduler(BaseBasicScheduler):
+class AnyBranchScheduler(Scheduler):
     def getChangeFilter(self, branch, branches, change_filter, categories):
         assert branch is NotABranch
         return filter.ChangeFilter.fromSchedulerConstructorArgs(

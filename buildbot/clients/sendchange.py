@@ -26,12 +26,11 @@ class Sender:
         self.encoding = encoding
 
     def send(self, branch, revision, comments, files, who=None, category=None,
-             when=None, properties={}, repository='', vc=None, project='',
-             revlink=''):
+             when=None, properties={}, repository='', project='', revlink=''):
         change = {'project': project, 'repository': repository, 'who': who,
                   'files': files, 'comments': comments, 'branch': branch,
                   'revision': revision, 'category': category, 'when': when,
-                  'properties': properties, 'revlink': revlink, 'src': vc}
+                  'properties': properties, 'revlink': revlink}
 
         for key in change:
             if type(change[key]) == str:

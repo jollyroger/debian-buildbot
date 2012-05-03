@@ -13,46 +13,41 @@
 #
 # Copyright Buildbot Team Members
 
-import time
-import traceback
-import shutil
 import os
 import sqlalchemy as sa
 import twisted
-import tempfile
-from twisted.internet import reactor, threads, defer
+from twisted.internet import reactor, threads, defer, task
 from twisted.python import threadpool, failure, versions, log
 
-# set this to True for *very* verbose query debugging output; this can
-# be monkey-patched from master.cfg, too:
-#     from buildbot.db import pool
-#     pool.debug = True
-debug = False
-
-def timed_do_fn(f):
-    """Decorate a do function to log before, after, and elapsed time,
-    with the name of the calling function.  This is not speedy!"""
-    def wrap(*args, **kwargs):
-        # get a description of the function that called us
-        st = traceback.extract_stack(limit=2)
-        file, line, name, _ = st[0]
-        descr = "%s ('%s' line %d)" % (name, file, line)
-
-        start_time = time.time()
-        log.msg("%s - before" % (descr,))
+# Hack for bug #1992.  In as-yet-unknown circumstances, select() fails to
+# notice that a selfpipe has been written to, thus causing callFromThread, as
+# used in deferToThreadPool, to hang indefinitely.  The workaround is to wake
+# up the select loop every second by ensuring that there is an event occuring
+# every second, with this busy loop:
+def bug1992hack(f):
+    def w(*args, **kwargs):
+        busyloop = task.LoopingCall(lambda : None)
+        busyloop.start(1)
         d = f(*args, **kwargs)
-        def after(x):
-            end_time = time.time()
-            elapsed = (end_time - start_time) * 1000
-            log.msg("%s - after (%0.2f ms elapsed)" % (descr, elapsed))
-            return x
-        d.addBoth(after)
+        def stop_loop(r):
+            busyloop.stop()
+            return r
+        d.addBoth(stop_loop)
         return d
-    wrap.__name__ = f.__name__
-    wrap.__doc__ = f.__doc__
-    return wrap
+    w.__name__ = f.__name__
+    w.__doc__ = f.__doc__
+    return w
+
 
 class DBThreadPool(threadpool.ThreadPool):
+    """
+    A pool of threads ready and waiting to execute queries.
+
+    If the engine has an C{optimal_thread_pool_size} attribute, then the
+    maxthreads of the thread pool will be set to that value.  This is most
+    useful for SQLite in-memory connections, where exactly one connection
+    (and thus thread) should be used.
+    """
 
     running = False
 
@@ -66,35 +61,17 @@ class DBThreadPool(threadpool.ThreadPool):
 
     def __init__(self, engine):
         pool_size = 5
-
-        # If the engine has an C{optimal_thread_pool_size} attribute, then the
-        # maxthreads of the thread pool will be set to that value.  This is
-        # most useful for SQLite in-memory connections, where exactly one
-        # connection (and thus thread) should be used.
         if hasattr(engine, 'optimal_thread_pool_size'):
             pool_size = engine.optimal_thread_pool_size
-
         threadpool.ThreadPool.__init__(self,
                         minthreads=1,
                         maxthreads=pool_size,
                         name='DBThreadPool')
         self.engine = engine
         if engine.dialect.name == 'sqlite':
-            vers = self.get_sqlite_version()
-            log.msg("Using SQLite Version %s" % (vers,))
-            if vers < (3,3,17):
-                log.msg("NOTE: this old version of SQLite does not support "
-                        "multiple simultaneous accesses to the database; "
-                        "add the 'pool_size=1' argument to your db url")
-            brkn = self.__broken_sqlite = self.detect_bug1810()
-            if brkn:
-                log.msg("Applying SQLite workaround from Buildbot bug #1810")
+            log.msg("applying SQLite workaround from Buildbot bug #1810")
+            self.__broken_sqlite = self.detect_bug1810()
         self._start_evt = reactor.callWhenRunning(self._start)
-
-        # patch the do methods to do verbose logging if necessary
-        if debug:
-            self.do = timed_do_fn(self.do)
-            self.do_with_engine = timed_do_fn(self.do_with_engine)
 
     def _start(self):
         self._start_evt = None
@@ -119,7 +96,14 @@ class DBThreadPool(threadpool.ThreadPool):
         reactor.removeSystemEventTrigger(self._stop_evt)
         self._stop()
 
+    @bug1992hack
     def do(self, callable, *args, **kwargs):
+        """
+        Call C{callable} in a thread, with a Connection as first argument.
+        Returns a deferred that will indicate the results of the callable.
+
+        Note: do not return any SQLAlchemy objects via this deferred!
+        """
         def thd():
             conn = self.engine.contextual_connect()
             if self.__broken_sqlite: # see bug #1810
@@ -133,7 +117,13 @@ class DBThreadPool(threadpool.ThreadPool):
             return rv
         return threads.deferToThreadPool(reactor, self, thd)
 
+    @bug1992hack
     def do_with_engine(self, callable, *args, **kwargs):
+        """
+        Like L{do}, but with an SQLAlchemy Engine as the first argument.  This
+        is only used for schema manipulation, and is not used at master
+        runtime.
+        """
         def thd():
             if self.__broken_sqlite: # see bug #1810
                 self.engine.execute("select * from sqlite_master")
@@ -148,6 +138,7 @@ class DBThreadPool(threadpool.ThreadPool):
     # of the synchronization wrong - the thread may still be "in use" when the
     # deferred fires in the parent, which can lead to database accesses hopping
     # between threads.  In practice, this should not cause any difficulty.
+    @bug1992hack
     def do_081(self, callable, *args, **kwargs): # pragma: no cover
         d = defer.Deferred()
         def thd():
@@ -166,6 +157,8 @@ class DBThreadPool(threadpool.ThreadPool):
                 reactor.callFromThread(d.errback, failure.Failure())
         self.callInThread(thd)
         return d
+
+    @bug1992hack
     def do_with_engine_081(self, callable, *args, **kwargs): # pragma: no cover
         d = defer.Deferred()
         def thd():
@@ -181,8 +174,6 @@ class DBThreadPool(threadpool.ThreadPool):
                 reactor.callFromThread(d.errback, failure.Failure())
         self.callInThread(thd)
         return d
-
-    # use the 0.8.1 versions on old Twisteds
     if twisted.version < versions.Version('twisted', 8, 2, 0):
         do = do_081
         do_with_engine = do_with_engine_081
@@ -196,11 +187,8 @@ class DBThreadPool(threadpool.ThreadPool):
         except ImportError:
             import sqlite3 as sqlite
 
-        tmpdir = tempfile.mkdtemp()
-        dbfile = os.path.join(tmpdir, "detect_bug1810.db")
+        dbfile = "detect_bug1810.db"
         def test(select_from_sqlite_master=False):
-            conn1 = None
-            conn2 = None
             try:
                 conn1 = sqlite.connect(dbfile)
                 curs1 = conn1.cursor()
@@ -214,39 +202,16 @@ class DBThreadPool(threadpool.ThreadPool):
                     curs1.execute("SELECT * from sqlite_master")
                 curs1.execute("SELECT * from foo")
             finally:
-                if conn1:
-                    conn1.close()
-                if conn2:
-                    conn2.close()
+                conn1.close()
+                conn2.close()
                 os.unlink(dbfile)
 
         try:
             test()
         except sqlite.OperationalError:
             # this is the expected error indicating it's broken
-            shutil.rmtree(tmpdir)
             return True
 
         # but this version should not fail..
         test(select_from_sqlite_master=True)
-        shutil.rmtree(tmpdir)
         return False # not broken - no workaround required
-
-    def get_sqlite_version(self):
-        engine = sa.create_engine('sqlite://')
-        conn = engine.contextual_connect()
-
-        try:
-            r = conn.execute("SELECT sqlite_version()")
-            vers_row = r.fetchone()
-            r.close()
-        except:
-            return (0,)
-
-        if vers_row:
-            try:
-                return tuple(map(int, vers_row[0].split('.')))
-            except (TypeError, ValueError):
-                return (0,)
-        else:
-            return (0,)

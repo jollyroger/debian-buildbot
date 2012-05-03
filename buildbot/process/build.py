@@ -17,7 +17,7 @@
 import types
 
 from zope.interface import implements
-from twisted.python import log, components
+from twisted.python import log
 from twisted.python.failure import Failure
 from twisted.internet import reactor, defer, error
 
@@ -26,10 +26,10 @@ from buildbot.status.results import SUCCESS, WARNINGS, FAILURE, EXCEPTION, \
   RETRY, SKIPPED, worst_status
 from buildbot.status.builder import Results
 from buildbot.status.progress import BuildProgress
-from buildbot.process import metrics, properties
+from buildbot.process import metrics
 
 
-class Build(properties.PropertiesMixin):
+class Build:
     """I represent a single build by a single slave. Specialized Builders can
     use subclasses of Build to hold status information unique to those build
     processes.
@@ -60,7 +60,6 @@ class Build(properties.PropertiesMixin):
     finished = False
     results = None
     stopped = False
-    set_runtime_properties = True
 
     def __init__(self, requests):
         self.requests = requests
@@ -95,6 +94,25 @@ class Build(properties.PropertiesMixin):
     def getSourceStamp(self):
         return self.source
 
+    def setProperty(self, propname, value, source, runtime=True):
+        """Set a property on this build. This may only be called after the
+        build has started, so that it has a BuildStatus object where the
+        properties can live."""
+        self.build_status.setProperty(propname, value, source, runtime=True)
+
+    def getProperties(self):
+        return self.build_status.getProperties()
+
+    def getProperty(self, propname):
+        return self.build_status.getProperty(propname)
+
+    def render(self, value):
+        """
+        Return a variant of value that has any WithProperties objects
+        substituted.  This recurses into Python's compound data types.
+        """
+        return interfaces.IRenderable(value).getRenderingFor(self)
+
     def allChanges(self):
         return self.source.changes
 
@@ -114,8 +132,6 @@ class Build(properties.PropertiesMixin):
         for c in self.allChanges():
             if c.who not in blamelist:
                 blamelist.append(c.who)
-        if self.source.patch_info: #Add patch author to blamelist
-            blamelist.append(self.source.patch_info[0])
         blamelist.sort()
         return blamelist
 
@@ -135,6 +151,8 @@ class Build(properties.PropertiesMixin):
         build.allFiles() ."""
         self.stepFactories = list(step_factories)
 
+
+
     useProgress = True
 
     def getSlaveCommandVersion(self, command, oldversion=None):
@@ -143,10 +161,7 @@ class Build(properties.PropertiesMixin):
         return self.slavebuilder.slave.slavename
 
     def setupProperties(self):
-        props = interfaces.IProperties(self)
-
-        # give the properties a reference back to this build
-        props.build = self
+        props = self.getProperties()
 
         # start with global properties from the configuration
         buildmaster = self.builder.botmaster.parent
@@ -529,6 +544,4 @@ class Build(properties.PropertiesMixin):
 
     # stopBuild is defined earlier
 
-components.registerAdapter(
-        lambda build : interfaces.IProperties(build.build_status),
-        Build, interfaces.IProperties)
+

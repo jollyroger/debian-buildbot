@@ -114,7 +114,7 @@ class BitBucketBuildBot(resource.Resource):
                 % error.getErrorMessage())
         return error
 
-    def addChange(self, dummy, remote, changei, src='hg'):
+    def addChange(self, dummy, remote, changei):
         """
         Sends changes from the commit to the buildmaster.
         """
@@ -129,9 +129,8 @@ class BitBucketBuildBot(resource.Resource):
         for key, value in change.iteritems():
             logging.debug("  %s: %s" % (key, value))
 
-        change['src'] = src
         deferred = remote.callRemote('addChange', change)
-        deferred.addCallback(self.addChange, remote, changei, src)
+        deferred.addCallback(self.addChange, remote, changei)
         return deferred
 
     def connected(self, remote, changes):

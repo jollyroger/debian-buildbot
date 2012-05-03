@@ -115,8 +115,6 @@ components.registerAdapter(RemoteBuilder,
 class RemoteBuildRequest(pb.Referenceable):
     def __init__(self, buildreq):
         self.b = buildreq
-        # mapping of observers (RemoteReference instances) to local callable
-        # objects that have been passed to BuildRequestStatus.subscribe
         self.observers = []
 
     def remote_getSourceStamp(self):
@@ -130,20 +128,22 @@ class RemoteBuildRequest(pb.Referenceable):
         """The observer's remote_newbuild method will be called (with two
         arguments: the RemoteBuild object, and our builderName) for each new
         Build that is created to handle this BuildRequest."""
+        self.observers.append(observer)
         def send(bs):
             d = observer.callRemote("newbuild",
                                     IRemote(bs), self.b.getBuilderName())
-            d.addErrback(twlog.err,
-                    "while calling client-side remote_newbuild")
-        self.observers.append((observer, send))
-        self.b.subscribe(send)
+            d.addErrback(lambda err: None)
+        reactor.callLater(0, self.b.subscribe, send)
 
     def remote_unsubscribe(self, observer):
-        for i, (obs, send) in enumerate(self.observers):
-            if obs == observer:
-                del self.observers[i]
-                self.b.unsubscribe(send)
-                break
+        # PB (well, at least oldpb) doesn't re-use RemoteReference instances,
+        # so sending the same object across the wire twice will result in two
+        # separate objects that compare as equal ('a is not b' and 'a == b').
+        # That means we can't use a simple 'self.observers.remove(observer)'
+        # here.
+        for o in self.observers:
+            if o == observer:
+                self.observers.remove(o)
 
 components.registerAdapter(RemoteBuildRequest,
                            interfaces.IBuildRequestStatus, IRemote)    
@@ -164,9 +164,6 @@ class RemoteBuild(pb.Referenceable):
 
     def remote_getChanges(self):
         return [IRemote(c) for c in self.b.getChanges()]
-
-    def remote_getRevisions(self):
-        return self.b.getRevisions()
 
     def remote_getResponsibleUsers(self):
         return self.b.getResponsibleUsers()

@@ -244,15 +244,27 @@ class ConsoleStatusResource(HtmlResource):
             # Get the last revision in this build.
             # We first try "got_revision", but if it does not work, then
             # we try "revision".
-            got_rev = build.getProperty("got_revision", build.getProperty("revision", -1))
-            if got_rev != -1 and not self.comparator.isValidRevision(got_rev):
-                got_rev = -1
+            got_rev = -1
+            try:
+                got_rev = build.getProperty("got_revision")
+                if not self.comparator.isValidRevision(got_rev):
+                    got_rev = -1
+            except KeyError:
+                pass
+
+            try:
+                if got_rev == -1:
+                    got_rev = build.getProperty("revision")
+                if not self.comparator.isValidRevision(got_rev):
+                    got_rev = -1
+            except:
+                pass
 
             # We ignore all builds that don't have last revisions.
             # TODO(nsylvain): If the build is over, maybe it was a problem
             # with the update source step. We need to find a way to tell the
             # user that his change might have broken the source update.
-            if got_rev != -1:
+            if got_rev and got_rev != -1:
                 details = self.getBuildDetails(request, builderName, build)
                 devBuild = DevBuild(got_rev, build, details)
                 builds.append(devBuild)
@@ -526,13 +538,12 @@ class ConsoleStatusResource(HtmlResource):
                     pass
 
     def displayPage(self, request, status, builderList, allBuilds, revisions,
-                    categories, repository, project, branch, debugInfo):
+                    categories, repository, branch, debugInfo):
         """Display the console page."""
         # Build the main template directory with all the informations we have.
         subs = dict()
         subs["branch"] = branch or 'trunk'
         subs["repository"] = repository
-        subs["project"] = project
         if categories:
             subs["categories"] = ' '.join(categories)
         subs["time"] = time.strftime("%a %d %b %Y %H:%M:%S",
@@ -616,8 +627,6 @@ class ConsoleStatusResource(HtmlResource):
         builders = request.args.get("builder", [])
         # Repo used to filter the changes shown.
         repository = request.args.get("repository", [None])[0]
-        # Project used to filter the changes shown.
-        project = request.args.get("project", [None])[0]
         # Branch used to filter the changes shown.
         branch = request.args.get("branch", [ANYBRANCH])[0]
         # List of all the committers name to display on the page.
@@ -648,8 +657,6 @@ class ConsoleStatusResource(HtmlResource):
                 revFilter['who'] = devName
             if repository:
                 revFilter['repository'] = repository
-            if project:
-                revFilter['project'] = project
             revisions = list(self.filterRevisions(allChanges, max_revs=numRevs,
                                                             filter=revFilter))
             debugInfo["revision_final"] = len(revisions)
@@ -674,7 +681,7 @@ class ConsoleStatusResource(HtmlResource):
 
             cxt.update(self.displayPage(request, status, builderList,
                                         allBuilds, revisions, categories,
-                                        repository, project, branch, debugInfo))
+                                        repository, branch, debugInfo))
 
             templates = request.site.buildbot_service.templates
             template = templates.get_template("console.html")

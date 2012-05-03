@@ -55,12 +55,6 @@ repository = None
 
 project = None
 
-# Username portion of PB login credentials to send the changes to the master
-username = "change"
-
-# Password portion of PB login credentials to send the changes to the master
-auth = "changepw"
-
 # When converting strings to unicode, assume this encoding. 
 # (set with --encoding)
 
@@ -78,14 +72,13 @@ def connectFailed(error):
     return error
 
 
-def addChanges(remote, changei, src='git'):
+def addChanges(remote, changei):
     logging.debug("addChanges %s, %s" % (repr(remote), repr(changei)))
     def addChange(c):
         logging.info("New revision: %s" % c['revision'][:8])
         for key, value in c.iteritems():
             logging.debug("  %s: %s" % (key, value))
 
-        c['src'] = src
         d = remote.callRemote('addChange', c)
         return d
 
@@ -118,15 +111,11 @@ def grab_commit_info(c, rev):
     f = os.popen("git show --raw --pretty=full %s" % rev, 'r')
 
     files = []
-    comments = []
 
     while True:
         line = f.readline()
         if not line:
             break
-
-        if line.startswith(4*' '):
-            comments.append(line[4:])
 
         m = re.match(r"^:.*[MAD]\s+(.+)$", line)
         if m:
@@ -142,7 +131,6 @@ def grab_commit_info(c, rev):
         if re.match(r"^Merge: .*$", line):
             files.append('merge')
 
-    c['comments'] = ''.join(comments)
     c['files'] = files
     status = f.close()
     if status:
@@ -159,6 +147,7 @@ def gen_changes(input, branch):
 
         m = re.match(r"^([0-9a-f]+) (.*)$", line.strip())
         c = {'revision': m.group(1),
+             'comments': unicode(m.group(2), encoding=encoding),
              'branch': unicode(branch, encoding=encoding),
         }
 
@@ -297,7 +286,7 @@ def process_changes():
     port = int(port)
 
     f = pb.PBClientFactory()
-    d = f.login(credentials.UsernamePassword(username, auth))
+    d = f.login(credentials.UsernamePassword("change", "changepw"))
     reactor.connectTCP(host, port, f)
 
     d.addErrback(connectFailed)
@@ -328,15 +317,6 @@ def parse_options():
                      { "encoding" : encoding })
     parser.add_option("-e", "--encoding", action="store", type="string", 
                       help=encoding_help)
-    username_help = ("Username used in PB connection auth, defaults to "
-                     "%(username)s." % { "username" : username })
-    parser.add_option("-u", "--username", action="store", type="string",
-                      help=username_help)
-    auth_help = ("Password used in PB connection auth, defaults to "
-                     "%(auth)s." % { "auth" : auth })
-    # 'a' instead of 'p' due to collisions with the project short option
-    parser.add_option("-a", "--auth", action="store", type="string",
-                      help=auth_help)
     options, args = parser.parse_args()
     return options
 
@@ -376,12 +356,6 @@ try:
 
     if options.project:
         project = options.project
-
-    if options.username:
-        username = options.username
-
-    if options.auth:
-        auth = options.auth
 
     if options.encoding:
         encoding = options.encoding

@@ -40,7 +40,6 @@ class Sender(unittest.TestCase):
         self.conn_host = self.conn_port = None
         self.lostConnection = False
         self.added_changes = []
-        self.vc_used = None
 
     def _fake_PBClientFactory(self):
         return self.factory
@@ -76,8 +75,7 @@ class Sender(unittest.TestCase):
             self.assertProcess('localhost', 1234, 'change', 'changepw', [
                 dict(project='', repository='', who=None, files=['a'],
                     comments='comm', branch='branch', revision='rev',
-                    category=None, when=None, properties={}, revlink='',
-                    src=None)])
+                    category=None, when=None, properties={}, revlink='')])
         d.addCallback(check)
         return d
 
@@ -88,22 +86,21 @@ class Sender(unittest.TestCase):
             self.assertProcess('localhost', 1234, 'me', 'sekrit', [
                 dict(project='', repository='', who=None, files=['a'],
                     comments='comm', branch='branch', revision='rev',
-                    category=None, when=None, properties={}, revlink='',
-                    src=None)])
+                    category=None, when=None, properties={}, revlink='')])
         d.addCallback(check)
         return d
 
     def test_send_full(self):
         s = sendchange.Sender('localhost:1234')
         d = s.send('branch', 'rev', 'comm', ['a'], who='me', category='cats',
-                   when=1234, properties={'a':'b'}, repository='r', vc='git',
+                   when=1234, properties={'a':'b'}, repository='r',
                    project='p', revlink='rl')
         def check(_):
             self.assertProcess('localhost', 1234, 'change', 'changepw', [
                 dict(project='p', repository='r', who='me', files=['a'],
                     comments='comm', branch='branch', revision='rev',
                     category='cats', when=1234, properties={'a':'b'},
-                    revlink='rl', src='git')])
+                    revlink='rl')])
         d.addCallback(check)
         return d
 
@@ -115,8 +112,7 @@ class Sender(unittest.TestCase):
             self.assertProcess('localhost', 1234, 'change', 'changepw', [
                 dict(project='', repository='', who=None, files=['a', 'b'],
                     comments='comm', branch='branch', revision='rev',
-                    category=None, when=None, properties={}, revlink='',
-                    src=None)])
+                    category=None, when=None, properties={}, revlink='')])
         d.addCallback(check)
         return d
 
@@ -146,8 +142,7 @@ class Sender(unittest.TestCase):
                      category=u'\U0001F640', # WEARY CAT FACE
                      when=1234,
                      properties={u'\N{LATIN SMALL LETTER A WITH MACRON}':'b'},
-                     revlink=u'\U0001F517', # LINK SYMBOL
-                     src=None)])
+                     revlink=u'\U0001F517')]) # LINK SYMBOL
         d.addCallback(check)
         return d
 
@@ -181,8 +176,7 @@ class Sender(unittest.TestCase):
                      when=1234,
                      ## NOTE: not decoded!
                      properties={'\xc4\x81':'b'},
-                     revlink=u'\U0001F517', # LINK SYMBOL
-                     src=None)])
+                     revlink=u'\U0001F517')]) # LINK SYMBOL
         d.addCallback(check)
         return d
 
@@ -218,8 +212,7 @@ class Sender(unittest.TestCase):
                      when=1234,
                      ## NOTE: not decoded!
                      properties={'\xb9':'b'},
-                     revlink=u'\N{INVERTED QUESTION MARK}',
-                     src=None)])
+                     revlink=u'\N{INVERTED QUESTION MARK}')]) # LINK SYMBOL
         d.addCallback(check)
         return d
 

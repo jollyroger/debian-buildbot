@@ -62,14 +62,11 @@ css_classes = {SUCCESS: "success",
 
 def getAndCheckProperties(req):
     """
-    Fetch custom build properties from the HTTP request of a "Force build" or
-    "Resubmit build" HTML form.
-    Check the names for valid strings, and return None if a problem is found.
-    Return a new Properties object containing each property found in req.
-    """
-    master = req.site.buildbot_service.master
-    pname_validate = master.config.validation['property_name']
-    pval_validate = master.config.validation['property_value']
+Fetch custom build properties from the HTTP request of a "Force build" or
+"Resubmit build" HTML form.
+Check the names for valid strings, and return None if a problem is found.
+Return a new Properties object containing each property found in req.
+"""
     properties = Properties()
     i = 1
     while True:
@@ -77,8 +74,8 @@ def getAndCheckProperties(req):
         pvalue = req.args.get("property%dvalue" % i, [""])[0]
         if not pname:
             break
-        if not pname_validate.match(pname) \
-                or not pval_validate.match(pvalue):
+        if not re.match(r'^[\w\.\-\/\~:]*$', pname) \
+                or not re.match(r'^[\w\.\-\/\~:]*$', pvalue):
             log.msg("bad property name='%s', value='%s'" % (pname, pvalue))
             return None
         properties.setProperty(pname, pvalue, "Force Build Form")
@@ -233,12 +230,7 @@ class ActionResource(resource.Resource, AccessorMixin):
         def redirect(url):
             request.redirect(url)
             request.write("see <a href='%s'>%s</a>" % (url,url))
-            try:
-                request.finish()
-            except RuntimeError:
-                # this occurs when the client has already disconnected; ignore
-                # it (see #2027)
-                log.msg("http client disconnected before results were sent")
+            request.finish()
         d.addCallback(redirect)
 
         def fail(f):
@@ -324,12 +316,7 @@ class HtmlResource(resource.Resource, ContextMixin):
         d.addCallback(handle)
         def ok(data):
             request.write(data)
-            try:
-                request.finish()
-            except RuntimeError:
-                # this occurs when the client has already disconnected; ignore
-                # it (see #2027)
-                log.msg("http client disconnected before results were sent")
+            request.finish()
         def fail(f):
             request.processingFailed(f)
             return None # processingFailed will log this for us
@@ -431,7 +418,13 @@ class BuildLineMixin:
         builder_name = build.getBuilder().getName()
         results = build.getResults()
         text = build.getText()
-        rev = str(build.getProperty("got_revision", "??"))
+        try:
+            rev = build.getProperty("got_revision")
+            if rev is None:
+                rev = "??"
+        except KeyError:
+            rev = "??"
+        rev = str(rev)
         css_class = css_classes.get(results, "")
         repo = build.getSourceStamp().repository
 

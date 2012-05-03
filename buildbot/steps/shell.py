@@ -15,11 +15,13 @@
 
 
 import re
-from twisted.python import log, failure
+from twisted.python import log
 from twisted.spread import pb
-from buildbot.process import buildstep
+from buildbot.process.buildstep import LoggingBuildStep, RemoteShellCommand
+from buildbot.process.buildstep import RemoteCommand
 from buildbot.status.results import SUCCESS, WARNINGS, FAILURE
 from buildbot.status.logfile import STDOUT, STDERR
+from buildbot.interfaces import BuildSlaveTooOldError
 
 # for existing configurations that import WithProperties from here.  We like
 # to move this class around just to keep our readers guessing.
@@ -27,7 +29,7 @@ from buildbot.process.properties import WithProperties
 _hush_pyflakes = [WithProperties]
 del _hush_pyflakes
 
-class ShellCommand(buildstep.LoggingBuildStep):
+class ShellCommand(LoggingBuildStep):
     """I run a single shell command on the buildslave. I return FAILURE if
     the exit code of that command is non-zero, SUCCESS otherwise. To change
     this behavior, override my .evaluateCommand method.
@@ -103,7 +105,7 @@ class ShellCommand(buildstep.LoggingBuildStep):
             if k in self.__class__.parms:
                 buildstep_kwargs[k] = kwargs[k]
                 del kwargs[k]
-        buildstep.LoggingBuildStep.__init__(self, **buildstep_kwargs)
+        LoggingBuildStep.__init__(self, **buildstep_kwargs)
         self.addFactoryArguments(workdir=workdir,
                                  description=description,
                                  descriptionDone=descriptionDone,
@@ -117,24 +119,16 @@ class ShellCommand(buildstep.LoggingBuildStep):
         self.addFactoryArguments(**kwargs)
 
     def setBuild(self, build):
-        buildstep.LoggingBuildStep.setBuild(self, build)
+        LoggingBuildStep.setBuild(self, build)
         # Set this here, so it gets rendered when we start the step
         self.slaveEnvironment = self.build.slaveEnvironment
 
     def setStepStatus(self, step_status):
-        buildstep.LoggingBuildStep.setStepStatus(self, step_status)
+        LoggingBuildStep.setStepStatus(self, step_status)
 
     def setDefaultWorkdir(self, workdir):
         rkw = self.remote_kwargs
         rkw['workdir'] = rkw['workdir'] or workdir
-
-    def getWorkdir(self):
-        """
-        Get the current notion of the workdir.  Note that this may change
-        between instantiation of the step and C{start}, as it is based on the
-        build's default workdir, and may even be C{None} before that point.
-        """
-        return self.remote_kwargs['workdir']
 
     def setCommand(self, command):
         self.command = command
@@ -170,6 +164,8 @@ class ShellCommand(buildstep.LoggingBuildStep):
             words = self.command
             if isinstance(words, (str, unicode)):
                 words = words.split()
+            # render() each word to handle WithProperties objects
+            words = self.build.render(words)
             if len(words) < 1:
                 return ["???"]
             if len(words) == 1:
@@ -178,7 +174,8 @@ class ShellCommand(buildstep.LoggingBuildStep):
                 return ["'%s" % words[0], "%s'" % words[1]]
             return ["'%s" % words[0], "%s" % words[1], "...'"]
         except:
-            log.err(failure.Failure(), "Error describing step")
+            log.msg("Error describing step")
+            log.err()
             return ["???"]
 
     def setupEnvironment(self, cmd):
@@ -198,18 +195,32 @@ class ShellCommand(buildstep.LoggingBuildStep):
             # note that each RemoteShellCommand gets its own copy of the
             # dictionary, so we shouldn't be affecting anyone but ourselves.
 
-    def buildCommandKwargs(self, warnings):
-        kwargs = buildstep.LoggingBuildStep.buildCommandKwargs(self)
-        kwargs.update(self.remote_kwargs)
-        kwargs['command'] = self.command
+    def checkForOldSlaveAndLogfiles(self):
+        if not self.logfiles:
+            return # doesn't matter
+        if not self.slaveVersionIsOlderThan("shell", "2.1"):
+            return # slave is new enough
+        # this buildslave is too old and will ignore the 'logfiles'
+        # argument. You'll either have to pull the logfiles manually
+        # (say, by using 'cat' in a separate RemoteShellCommand) or
+        # upgrade the buildslave.
+        msg1 = ("Warning: buildslave %s is too old "
+                "to understand logfiles=, ignoring it."
+               % self.getSlaveName())
+        msg2 = "You will have to pull this logfile (%s) manually."
+        log.msg(msg1)
+        for logname,remotefilevalue in self.logfiles.items():
+            remotefilename = remotefilevalue
+            # check for a dictionary of options
+            if type(remotefilevalue) == dict:
+                remotefilename = remotefilevalue['filename']
 
-        # check for the usePTY flag
-        if kwargs.has_key('usePTY') and kwargs['usePTY'] != 'slave-config':
-            if self.slaveVersionIsOlderThan("svn", "2.7"):
-                warnings.append("NOTE: slave does not allow master to override usePTY\n")
-                del kwargs['usePTY']
-
-        return kwargs
+            newlog = self.addLog(logname)
+            newlog.addHeader(msg1 + "\n")
+            newlog.addHeader(msg2 % remotefilename + "\n")
+            newlog.finish()
+        # now prevent setupLogfiles() from adding them
+        self.logfiles = {}
 
     def start(self):
         # this block is specific to ShellCommands. subclasses that don't need
@@ -219,9 +230,19 @@ class ShellCommand(buildstep.LoggingBuildStep):
         warnings = []
 
         # create the actual RemoteShellCommand instance now
-        kwargs = self.buildCommandKwargs(warnings)
-        cmd = buildstep.RemoteShellCommand(**kwargs)
+        kwargs = self.remote_kwargs
+        command = self.command
+        kwargs['command'] = command
+        kwargs['logfiles'] = self.logfiles
+
+        # check for the usePTY flag
+        if kwargs.has_key('usePTY') and kwargs['usePTY'] != 'slave-config':
+            if self.slaveVersionIsOlderThan("svn", "2.7"):
+                warnings.append("NOTE: slave does not allow master to override usePTY\n")
+
+        cmd = RemoteShellCommand(**kwargs)
         self.setupEnvironment(cmd)
+        self.checkForOldSlaveAndLogfiles()
 
         self.startCommand(cmd, warnings)
 
@@ -233,6 +254,9 @@ class TreeSize(ShellCommand):
     description = "measuring tree size"
     descriptionDone = "tree size measured"
     kib = None
+
+    def __init__(self, *args, **kwargs):
+        ShellCommand.__init__(self, *args, **kwargs)
 
     def commandComplete(self, cmd):
         out = cmd.logs['stdio'].getText()
@@ -252,7 +276,6 @@ class TreeSize(ShellCommand):
         if self.kib is not None:
             return ["treesize", "%d KiB" % self.kib]
         return ["treesize", "unknown"]
-
 
 class SetProperty(ShellCommand):
     name = "setproperty"
@@ -276,8 +299,6 @@ class SetProperty(ShellCommand):
 
     def commandComplete(self, cmd):
         if self.property:
-            if cmd.rc != 0:
-                return
             result = cmd.logs['stdio'].getText()
             if self.strip: result = result.strip()
             propname = self.property
@@ -293,19 +314,14 @@ class SetProperty(ShellCommand):
             self.property_changes = new_props
 
     def createSummary(self, log):
-        if self.property_changes:
-            props_set = [ "%s: %r" % (k,v)
-                          for k,v in self.property_changes.items() ]
-            self.addCompleteLog('property changes', "\n".join(props_set))
+        props_set = [ "%s: %r" % (k,v) for k,v in self.property_changes.items() ]
+        self.addCompleteLog('property changes', "\n".join(props_set))
 
     def getText(self, cmd, results):
-        if len(self.property_changes) > 1:
-            return [ "%d properties set" % len(self.property_changes) ]
-        elif len(self.property_changes) == 1:
-            return [ "property '%s' set" % self.property_changes.keys()[0] ]
+        if self.property_changes:
+            return [ "set props:" ] + self.property_changes.keys()
         else:
-            # let ShellCommand describe
-            return ShellCommand.getText(self, cmd, results)
+            return [ "no change" ]
 
 class Configure(ShellCommand):
 
@@ -332,24 +348,33 @@ class StringFileWriter(pb.Referenceable):
     def remote_close(self):
         pass
 
+class SilentRemoteCommand(RemoteCommand):
+    """
+    Remote command subclass used to run an internal file upload command on the
+    slave. We do not need any progress updates from such command, so override
+    remoteUpdate() with an empty method.
+    """
+    def remoteUpdate(self, update):
+        pass
+
 class WarningCountingShellCommand(ShellCommand):
     renderables = [ 'suppressionFile' ]
 
     warnCount = 0
     warningPattern = '.*warning[: ].*'
     # The defaults work for GNU Make.
-    directoryEnterPattern = (u"make.*: Entering directory " 
-                             u"[\u2019\"`'](.*)[\u2019'`\"]")
+    directoryEnterPattern = "make.*: Entering directory [\"`'](.*)['`\"]"
     directoryLeavePattern = "make.*: Leaving directory"
     suppressionFile = None
 
     commentEmptyLineRe = re.compile(r"^\s*(\#.*)?$")
     suppressionLineRe = re.compile(r"^\s*(.+?)\s*:\s*(.+?)\s*(?:[:]\s*([0-9]+)(?:-([0-9]+))?\s*)?$")
 
-    def __init__(self,
+    def __init__(self, workdir=None,
                  warningPattern=None, warningExtractor=None, maxWarnCount=None,
                  directoryEnterPattern=None, directoryLeavePattern=None,
                  suppressionFile=None, **kwargs):
+        self.workdir = workdir
         # See if we've been given a regular expression to use to match
         # warnings. If not, use a default that assumes any line with "warning"
         # present is a warning. This may lead to false positives in some cases.
@@ -368,7 +393,7 @@ class WarningCountingShellCommand(ShellCommand):
         self.maxWarnCount = maxWarnCount
 
         # And upcall to let the base class do its work
-        ShellCommand.__init__(self, **kwargs)
+        ShellCommand.__init__(self, workdir=workdir, **kwargs)
 
         self.addFactoryArguments(warningPattern=warningPattern,
                                  directoryEnterPattern=directoryEnterPattern,
@@ -378,6 +403,11 @@ class WarningCountingShellCommand(ShellCommand):
                                  suppressionFile=suppressionFile)
         self.suppressions = []
         self.directoryStack = []
+
+    def setDefaultWorkdir(self, workdir):
+        if self.workdir is None:
+            self.workdir = workdir
+        ShellCommand.setDefaultWorkdir(self, workdir)
 
     def addSuppression(self, suppressionList):
         """
@@ -401,9 +431,9 @@ class WarningCountingShellCommand(ShellCommand):
         is no upper bound."""
 
         for fileRe, warnRe, start, end in suppressionList:
-            if fileRe != None and isinstance(fileRe, basestring):
+            if fileRe != None and isinstance(fileRe, str):
                 fileRe = re.compile(fileRe)
-            if warnRe != None and isinstance(warnRe, basestring):
+            if warnRe != None and isinstance(warnRe, str):
                 warnRe = re.compile(warnRe)
             self.suppressions.append((fileRe, warnRe, start, end))
 
@@ -427,23 +457,19 @@ class WarningCountingShellCommand(ShellCommand):
     def maybeAddWarning(self, warnings, line, match):
         if self.suppressions:
             (file, lineNo, text) = self.warningExtractor(self, line, match)
-            lineNo = lineNo and int(lineNo)
 
             if file != None and file != "" and self.directoryStack:
-                currentDirectory = '/'.join(self.directoryStack)
+                currentDirectory = self.directoryStack[-1]
                 if currentDirectory != None and currentDirectory != "":
                     file = "%s/%s" % (currentDirectory, file)
 
             # Skip adding the warning if any suppression matches.
             for fileRe, warnRe, start, end in self.suppressions:
-                if not (file == None or fileRe == None or fileRe.match(file)):
-                    continue
-                if not (warnRe == None or warnRe.search(text)):
-                    continue
-                if not ((start == None and end == None) or
-                        (lineNo != None and start <= lineNo and end >= lineNo)):
-                    continue
-                return
+                if ( (file == None or fileRe == None or fileRe.search(file)) and
+                     (warnRe == None or  warnRe.search(text)) and
+                     ((start == None and end == None) or
+                      (lineNo != None and start <= lineNo and end >= lineNo)) ):
+                    return
 
         warnings.append(line)
         self.warnCount += 1
@@ -452,16 +478,21 @@ class WarningCountingShellCommand(ShellCommand):
         if self.suppressionFile == None:
             return ShellCommand.start(self)
 
+        version = self.slaveVersion("uploadFile")
+        if not version:
+            m = "Slave is too old, does not know about uploadFile"
+            raise BuildSlaveTooOldError(m)
+
         self.myFileWriter = StringFileWriter()
 
         args = {
             'slavesrc': self.suppressionFile,
-            'workdir': self.getWorkdir(),
+            'workdir': self.workdir,
             'writer': self.myFileWriter,
             'maxsize': None,
             'blocksize': 32*1024,
             }
-        cmd = buildstep.RemoteCommand('uploadFile', args, ignore_updates=True)
+        cmd = SilentRemoteCommand('uploadFile', args)
         d = self.runCommand(cmd)
         d.addCallback(self.uploadDone)
         d.addErrback(self.failed)
@@ -499,18 +530,19 @@ class WarningCountingShellCommand(ShellCommand):
 
         # Now compile a regular expression from whichever warning pattern we're
         # using
+        if not self.warningPattern:
+            return
+
         wre = self.warningPattern
         if isinstance(wre, str):
             wre = re.compile(wre)
 
         directoryEnterRe = self.directoryEnterPattern
-        if (directoryEnterRe != None
-                and isinstance(directoryEnterRe, basestring)):
+        if directoryEnterRe != None and isinstance(directoryEnterRe, str):
             directoryEnterRe = re.compile(directoryEnterRe)
 
         directoryLeaveRe = self.directoryLeavePattern
-        if (directoryLeaveRe != None
-                and isinstance(directoryLeaveRe, basestring)):
+        if directoryLeaveRe != None and isinstance(directoryLeaveRe, str):
             directoryLeaveRe = re.compile(directoryLeaveRe)
 
         # Check if each line in the output from this command matched our
@@ -524,12 +556,10 @@ class WarningCountingShellCommand(ShellCommand):
                 match = directoryEnterRe.search(line)
                 if match:
                     self.directoryStack.append(match.group(1))
-                    continue
-            if (directoryLeaveRe and
-                self.directoryStack and
-                directoryLeaveRe.search(line)):
-                    self.directoryStack.pop()
-                    continue
+                if (directoryLeaveRe and
+                    self.directoryStack and
+                    directoryLeaveRe.search(line)):
+                        self.directoryStack.pop()
 
             match = wre.match(line)
             if match:
@@ -544,7 +574,10 @@ class WarningCountingShellCommand(ShellCommand):
         warnings_stat = self.step_status.getStatistic('warnings', 0)
         self.step_status.setStatistic('warnings', warnings_stat + self.warnCount)
 
-        old_count = self.getProperty("warnings-count", 0)
+        try:
+            old_count = self.getProperty("warnings-count")
+        except KeyError:
+            old_count = 0
         self.setProperty("warnings-count", old_count + self.warnCount, "WarningCountingShellCommand")
 
 
@@ -565,6 +598,15 @@ class Compile(WarningCountingShellCommand):
     description = ["compiling"]
     descriptionDone = ["compile"]
     command = ["make", "all"]
+
+    OFFprogressMetrics = ('output',)
+    # things to track: number of files compiled, number of directories
+    # traversed (assuming 'make' is being used)
+
+    def createSummary(self, log):
+        # TODO: grep for the characteristic GCC error lines and
+        # assemble them into a pair of buffers
+        WarningCountingShellCommand.createSummary(self, log)
 
 class Test(WarningCountingShellCommand):
 
@@ -591,7 +633,6 @@ class Test(WarningCountingShellCommand):
     def describe(self, done=False):
         description = WarningCountingShellCommand.describe(self, done)
         if done:
-            description = description[:] # make a private copy
             if self.step_status.hasStatistic('tests-total'):
                 total = self.step_status.getStatistic("tests-total", 0)
                 failed = self.step_status.getStatistic("tests-failed", 0)

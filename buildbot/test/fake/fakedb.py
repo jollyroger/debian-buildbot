@@ -42,8 +42,7 @@ class Row(object):
     auto-incremented id.  Auto-assigned id's begin at 1000, so any explicitly
     specified ID's should be less than 1000.
 
-    @cvar required_columns: a tuple of columns that must be given in the
-    constructor
+    @cvar id_column: a tuple of columns that must be given in the constructor
 
     @ivar values: the values to be inserted into this row
     """
@@ -59,8 +58,6 @@ class Row(object):
                 self.values[self.id_column] = self.nextId()
         for col in self.required_columns:
             assert col in kwargs, "%s not specified" % col
-        for col in kwargs.keys():
-            assert col in self.defaults, "%s is not a valid column" % col
         # make the values appear as attributes
         self.__dict__.update(self.values)
 
@@ -80,6 +77,9 @@ class BuildRequest(Row):
         buildsetid = None,
         buildername = "bldr",
         priority = 0,
+        claimed_at = 0,
+        claimed_by_name = None,
+        claimed_by_incarnation = None,
         complete = 0,
         results = -1,
         submitted_at = 0,
@@ -88,18 +88,6 @@ class BuildRequest(Row):
 
     id_column = 'id'
     required_columns = ('buildsetid',)
-
-
-class BuildRequestClaim(Row):
-    table = "buildrequest_claims"
-
-    defaults = dict(
-        brid = None,
-        objectid = None,
-        claimed_at = None
-    )
-
-    required_columns = ('brid', 'objectid', 'claimed_at')
 
 
 class Change(Row):
@@ -155,15 +143,6 @@ class ChangeProperty(Row):
 
     required_columns = ('changeid',)
 
-class ChangeUser(Row):
-    table = "change_users"
-
-    defaults = dict(
-        changeid = None,
-        uid = None,
-    )
-
-    required_columns = ('changeid',)
 
 class Patch(Row):
     table = "patches"
@@ -171,9 +150,7 @@ class Patch(Row):
     defaults = dict(
         id = None,
         patchlevel = 0,
-        patch_base64 = 'aGVsbG8sIHdvcmxk', # 'hello, world',
-        patch_author = None,
-        patch_comment = None,
+        patch_base64 = 'aGVsbG8sIHdvcmxk', # 'hello, world'
         subdir = None,
     )
 
@@ -296,29 +273,6 @@ class ObjectState(Row):
 
     required_columns = ( 'objectid', )
 
-class User(Row):
-    table = "users"
-
-    defaults = dict(
-        uid = None,
-        identifier = 'soap',
-        bb_username = None,
-        bb_password = None,
-    )
-
-    id_column = 'uid'
-
-class UserInfo(Row):
-    table = "users_info"
-
-    defaults = dict(
-        uid = None,
-        attr_type = 'git',
-        attr_data = 'Tyler Durden <tyler@mayhem.net>',
-    )
-
-    required_columns = ( 'uid', )
-
 class Build(Row):
     table = "builds"
 
@@ -361,8 +315,7 @@ class FakeChangesComponent(FakeDBComponent):
                     revision=row.revision, when=row.when_timestamp,
                     branch=row.branch, category=row.category,
                     revlink=row.revlink, properties=properties.Properties(),
-                    repository=row.repository, project=row.project,
-                    uid=None))
+                    repository=row.repository, project=row.project))
                 self.changes[row.changeid] = ch
 
             elif isinstance(row, ChangeFile):
@@ -379,10 +332,6 @@ class FakeChangesComponent(FakeDBComponent):
                 v, s = json.loads(vs)
                 ch.properties.setProperty(n, v, s)
 
-            elif isinstance(row, ChangeUser):
-                ch = self.changes[row.changeid]
-                ch.uid = row.uid
-
     # component methods
 
     def getLatestChangeid(self):
@@ -396,13 +345,6 @@ class FakeChangesComponent(FakeDBComponent):
         except KeyError:
             ch = None
         return defer.succeed(self._ch2chdict(ch))
-
-    def getChangeUids(self, changeid):
-        try:
-            ch_uids = [self.changes[changeid].uid]
-        except KeyError:
-            ch_uids = []
-        return defer.succeed(ch_uids)
 
     # TODO: addChange
     # TODO: getRecentChanges
@@ -456,6 +398,13 @@ class FakeSchedulersComponent(FakeDBComponent):
 
     # component methods
 
+    def getState(self, schedulerid):
+        return defer.succeed(self.states.get(schedulerid, {}))
+
+    def setState(self, schedulerid, state):
+        self.states[schedulerid] = state
+        return defer.succeed(None)
+
     def classifyChanges(self, schedulerid, classifications):
         self.classifications.setdefault(schedulerid, {}).update(classifications)
         return defer.succeed(None)
@@ -484,11 +433,18 @@ class FakeSchedulersComponent(FakeDBComponent):
 
     # fake methods
 
+    def fakeState(self, schedulerid, state):
+        """Set the state dictionary for a scheduler"""
+        self.states[schedulerid] = state
+
     def fakeClassifications(self, schedulerid, classifications):
         """Set the set of classifications for a scheduler"""
         self.classifications[schedulerid] = classifications
 
     # assertions
+
+    def assertState(self, schedulerid, state):
+        self.t.assertEqual(self.states[schedulerid], state)
 
     def assertClassifications(self, schedulerid, classifications):
         self.t.assertEqual(
@@ -508,8 +464,6 @@ class FakeSourceStampsComponent(FakeDBComponent):
                 self.patches[row.id] = dict(
                     patch_level=row.patchlevel,
                     patch_body=base64.b64decode(row.patch_base64),
-                    patch_author=row.patch_author,
-                    patch_comment=row.patch_comment,
                     patch_subdir=row.subdir)
 
         for row in rows:
@@ -525,8 +479,8 @@ class FakeSourceStampsComponent(FakeDBComponent):
     # component methods
 
     def addSourceStamp(self, branch, revision, repository, project,
-                          patch_body=None, patch_level=0, patch_author=None,
-                          patch_comment=None, patch_subdir=None, changeids=[]):
+                          patch_body=None, patch_level=0, patch_subdir=None,
+                          changeids=[]):
         id = len(self.sourcestamps) + 100
         while id in self.sourcestamps:
             id += 1
@@ -541,8 +495,6 @@ class FakeSourceStampsComponent(FakeDBComponent):
                 patch_level=patch_level,
                 patch_body=patch_body,
                 patch_subdir=patch_subdir,
-                patch_author=patch_author,
-                patch_comment=patch_comment
             )
         else:
             patchid = None
@@ -564,8 +516,6 @@ class FakeSourceStampsComponent(FakeDBComponent):
                 ssdict['patch_body'] = None
                 ssdict['patch_level'] = None
                 ssdict['patch_subdir'] = None
-                ssdict['patch_author'] = None
-                ssdict['patch_comment'] = None
             del ssdict['patchid']
             return defer.succeed(ssdict)
         else:
@@ -798,7 +748,7 @@ class FakeStateComponent(FakeDBComponent):
             json_value = self.states[objectid][name]
         except KeyError:
             if default is not object:
-                return defer.succeed(default)
+                return default
             raise
         return defer.succeed(json.loads(json_value))
 
@@ -824,34 +774,23 @@ class FakeStateComponent(FakeDBComponent):
             self.t.assertEqual(json.loads(state[k]), v,
                     "state is %r" % (state,))
 
-    def assertStateByClass(self, name, class_name, **kwargs):
-        objectid = self.objects[(name, class_name)]
-        state = self.states[objectid]
-        for k,v in kwargs.iteritems():
-            self.t.assertIn(k, state)
-            self.t.assertEqual(json.loads(state[k]), v,
-                    "state is %r" % (state,))
-
 
 class FakeBuildRequestsComponent(FakeDBComponent):
 
     # for use in determining "my" requests
-    MASTER_ID = 824
+    MASTER_NAME = "this-master"
+    MASTER_INCARNATION = "this-lifetime"
 
     # override this to set reactor.seconds
     _reactor = reactor
 
     def setUp(self):
         self.reqs = {}
-        self.claims = {}
 
     def insertTestData(self, rows):
         for row in rows:
             if isinstance(row, BuildRequest):
                 self.reqs[row.id] = row
-
-            if isinstance(row, BuildRequestClaim):
-                self.claims[row.brid] = row
 
     # component methods
 
@@ -873,15 +812,16 @@ class FakeBuildRequestsComponent(FakeDBComponent):
                 if not complete and br.complete:
                     continue
             if claimed is not None:
-                claim_row = self.claims.get(br.id)
                 if claimed == "mine":
-                    if not claim_row or claim_row.objectid != self.MASTER_ID:
+                    if br.claimed_by_name != self.MASTER_NAME:
+                        continue
+                    if br.claimed_by_incarnation != self.MASTER_INCARNATION:
                         continue
                 elif claimed:
-                    if not claim_row:
+                    if not br.claimed_at:
                         continue
                 else:
-                    if claim_row:
+                    if br.claimed_at:
                         continue
             if bsid is not None:
                 if br.buildsetid != bsid:
@@ -891,41 +831,60 @@ class FakeBuildRequestsComponent(FakeDBComponent):
 
     def claimBuildRequests(self, brids):
         for brid in brids:
-            if brid not in self.reqs or brid in self.claims:
+            if brid not in self.reqs:
+                return defer.fail(
+                        failure.Failure(buildrequests.AlreadyClaimedError))
+            br = self.reqs[brid]
+            if br.claimed_at and (
+                    br.claimed_by_name != self.MASTER_NAME or
+                    br.claimed_by_incarnation != self.MASTER_INCARNATION):
                 return defer.fail(
                         failure.Failure(buildrequests.AlreadyClaimedError))
         # now that we've thrown any necessary exceptions, get started
         for brid in brids:
-            self.claims[brid] = BuildRequestClaim(brid=brid,
-                objectid=self.MASTER_ID, claimed_at=self._reactor.seconds())
+            br = self.reqs[brid]
+            br.claimed_at = self._reactor.seconds()
+            br.claimed_by_name = self.MASTER_NAME
+            br.claimed_by_incarnation = self.MASTER_INCARNATION
         return defer.succeed(None)
 
-    def reclaimBuildRequests(self, brids):
-        for brid in brids:
-            if brid not in self.claims:
-                print "trying to reclaim brid %d, but it's not claimed" % brid
-                return defer.fail(
-                        failure.Failure(buildrequests.AlreadyClaimedError))
-        # now that we've thrown any necessary exceptions, get started
-        for brid in brids:
-            self.claims[brid] = BuildRequestClaim(brid=brid,
-                objectid=self.MASTER_ID, claimed_at=self._reactor.seconds())
+    def unclaimOldIncarnationRequests(self):
+        for br in self.reqs.itervalues():
+            if (not br.complete and br.claimed_at and
+                    br.claimed_by_name == self.MASTER_NAME and
+                    br.claimed_by_incarnation != self.MASTER_INCARNATION):
+                br.claimed_at = 0
+                br.claimed_by_name = None
+                br.claimed_by_incarnation = None
+        return defer.succeed(None)
+
+    def unclaimExpiredRequests(self, old):
+        old_time = self._reactor.seconds() - old
+        for br in self.reqs.itervalues():
+            if not br.complete and br.claimed_at and br.claimed_at < old_time:
+                br.claimed_at = 0
+                br.claimed_by_name = None
+                br.claimed_by_incarnation = None
         return defer.succeed(None)
 
     # Code copied from buildrequests.BuildRequestConnectorComponent
     def _brdictFromRow(self, row):
         claimed = mine = False
-        claimed_at = None
-        claim_row = self.claims.get(row.id, None)
-        if claim_row:
+        if (row.claimed_at
+                and row.claimed_by_name is not None
+                and row.claimed_by_incarnation is not None):
             claimed = True
-            claimed_at = claim_row.claimed_at
-            mine = claim_row.objectid == self.MASTER_ID
+            master_name = self.db.master.master_name
+            master_incarnation = self.db.master.master_incarnation
+            if (row.claimed_by_name == master_name and
+                row.claimed_by_incarnation == master_incarnation):
+               mine = True
 
         def mkdt(epoch):
             if epoch:
                 return epoch2datetime(epoch)
         submitted_at = mkdt(row.submitted_at)
+        claimed_at = mkdt(row.claimed_at)
         complete_at = mkdt(row.complete_at)
 
         return dict(brid=row.id, buildsetid=row.buildsetid,
@@ -936,21 +895,39 @@ class FakeBuildRequestsComponent(FakeDBComponent):
 
     # fake methods
 
-    def fakeClaimBuildRequest(self, brid, claimed_at=None, objectid=None):
-        if objectid is None:
-            objectid = self.MASTER_ID
-        self.claims[brid] = BuildRequestClaim(brid=brid,
-            objectid=objectid, claimed_at=self._reactor.seconds())
+    def fakeClaimBuildRequest(self, brid, claimed_at=None, master_name=None,
+                                          master_incarnation=None):
+        br = self.reqs[brid]
+        br.claimed_at = claimed_at or self._reactor.seconds()
+        br.claimed_by_name = master_name or self.MASTER_NAME
+        br.claimed_by_incarnation = \
+                master_incarnation or self.MASTER_INCARNATION
 
     def fakeUnclaimBuildRequest(self, brid):
-        del self.claims[brid]
+        br = self.reqs[brid]
+        br.claimed_at = 0
+        br.claimed_by_name = None
+        br.claimed_by_incarnation = None
 
     # assertions
 
+    def assertClaimed(self, brid, master_name=None, master_incarnation=None):
+        self.t.assertTrue(self.reqs[brid].claimed_at)
+        if master_name and master_incarnation:
+            br = self.reqs[brid]
+            self.t.assertEqual(
+                [ br.claimed_by_name, br.claimed_by_incarnation ]
+                [ master_name, master_incarnation ])
+
+    def assertClaimedMine(self, brid):
+        return self.t.assertClaimed(brid, master_name=self.MASTER_NAME,
+                master_incarnation=self.MASTER_INCARNATION)
+
     def assertMyClaims(self, claimed_brids):
         self.t.assertEqual(
-                [ id for (id, brc) in self.claims.iteritems()
-                  if brc.objectid == self.MASTER_ID ],
+                [ id for (id, br) in self.reqs.iteritems()
+                  if br.claimed_by_name == self.MASTER_NAME and
+                     br.claimed_by_incarnation == self.MASTER_INCARNATION ],
                 claimed_brids)
 
 
@@ -1016,119 +993,6 @@ class FakeBuildsComponent(FakeDBComponent):
             if b:
                 b.finish_time = now
 
-class FakeUsersComponent(FakeDBComponent):
-
-    def setUp(self):
-        self.users = {}
-        self.users_info = {}
-        self.id_num = 0
-
-    def insertTestData(self, rows):
-        for row in rows:
-            if isinstance(row, User):
-                self.users[row.uid] = dict(identifier=row.identifier,
-                                           bb_username=row.bb_username,
-                                           bb_password=row.bb_password)
-
-            if isinstance(row, UserInfo):
-                assert row.uid in self.users
-                if row.uid not in self.users_info:
-                    self.users_info[row.uid] = [dict(attr_type=row.attr_type,
-                                                     attr_data=row.attr_data)]
-                else:
-                    self.users_info[row.uid].append(
-                                                dict(attr_type=row.attr_type,
-                                                     attr_data=row.attr_data))
-
-    def _user2dict(self, uid):
-        usdict = None
-        if uid in self.users:
-            usdict = self.users[uid]
-            if uid in self.users_info:
-                infos = self.users_info[uid]
-                for attr in infos:
-                    usdict[attr['attr_type']] = attr['attr_data']
-            usdict['uid'] = uid
-        return usdict
-
-    def nextId(self):
-        self.id_num += 1
-        return self.id_num
-
-    # component methods
-
-    def findUserByAttr(self, identifier, attr_type, attr_data):
-        for uid in self.users_info:
-            attrs = self.users_info[uid]
-            for attr in attrs:
-                if (attr_type == attr['attr_type'] and
-                    attr_data == attr['attr_data']):
-                    return defer.succeed(uid)
-
-        uid = self.nextId()
-        self.db.insertTestData([User(uid=uid, identifier=identifier)])
-        self.db.insertTestData([UserInfo(uid=uid,
-                                         attr_type=attr_type,
-                                         attr_data=attr_data)])
-        return defer.succeed(uid)
-
-    def getUser(self, uid):
-        usdict = None
-        if uid in self.users:
-            usdict = self._user2dict(uid)
-        return defer.succeed(usdict)
-
-    def getUserByUsername(self, username):
-        usdict = None
-        for uid in self.users:
-            user = self.users[uid]
-            if user['bb_username'] == username:
-                usdict = self._user2dict(uid)
-        return defer.succeed(usdict)
-
-    def updateUser(self, uid=None, identifier=None, bb_username=None,
-                   bb_password=None, attr_type=None, attr_data=None):
-        assert uid is not None
-
-        if identifier is not None:
-            self.users[uid]['identifier'] = identifier
-
-        if bb_username is not None:
-            assert bb_password is not None
-            try:
-                user = self.users[uid]
-                user['bb_username'] = bb_username
-                user['bb_password'] = bb_password
-            except KeyError:
-                pass
-
-        if attr_type is not None:
-            assert attr_data is not None
-            try:
-                infos = self.users_info[uid]
-                for attr in infos:
-                    if attr_type == attr['attr_type']:
-                        attr['attr_data'] = attr_data
-                        break
-                else:
-                    infos.append(dict(attr_type=attr_type,
-                                      attr_data=attr_data))
-            except KeyError:
-                pass
-
-        return defer.succeed(None)
-
-    def removeUser(self, uid):
-        if uid in self.users:
-            self.users.pop(uid)
-            self.users_info.pop(uid)
-        return defer.succeed(None)
-
-    def identifierToUid(self, identifier):
-        for uid in self.users:
-            if identifier == self.users[uid]['identifier']:
-                return defer.succeed(uid)
-        return defer.succeed(None)
 
 class FakeDBConnector(object):
     """
@@ -1155,8 +1019,6 @@ class FakeDBConnector(object):
         self.buildrequests = comp = FakeBuildRequestsComponent(self, testcase)
         self._components.append(comp)
         self.builds = comp = FakeBuildsComponent(self, testcase)
-        self._components.append(comp)
-        self.users = comp = FakeUsersComponent(self, testcase)
         self._components.append(comp)
 
     def insertTestData(self, rows):

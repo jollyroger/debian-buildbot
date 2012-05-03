@@ -15,7 +15,6 @@
 
 from zope.interface import implements
 from twisted.trial import unittest
-from twisted.internet import defer
 
 from buildbot.status.web.authz import Authz
 from buildbot.status.web.auth import IAuth
@@ -41,50 +40,31 @@ class TestAuthz(unittest.TestCase):
     def test_actionAllowed_Defaults(self):
         "by default, nothing is allowed"
         z = Authz()
-        self.failedActions = []
-        self.dl = []
+        failedActions = []
         for a in Authz.knownActions:
-            md = z.actionAllowed(a, StubRequest('foo', 'bar'))
-            def check(res):
-                if res:
-                    self.failedActions.append(a)
-                return
-            md.addCallback(check)
-            self.dl.append(md)
-        d = defer.DeferredList(self.dl)
-        def check_failed(_):
-            if self.failedActions:
-                raise unittest.FailTest("action(s) %s do not default to False"
-                                        % (self.failedActions,))
-        d.addCallback(check_failed)
-        return d
+            if z.actionAllowed(a, StubRequest('foo', 'bar')):
+                failedActions.append(a)
+        if failedActions:
+            raise unittest.FailTest("action(s) %s do not default to False"
+                        % (failedActions,))
 
     def test_actionAllowed_Positive(self):
         "'True' should always permit access"
         z = Authz(forceBuild=True)
-        d = z.actionAllowed('forceBuild', StubRequest('foo', 'bar'))
-        def check(res):
-            self.assertEqual(res, True)
-        d.addCallback(check)
-        return d
+        assert z.actionAllowed('forceBuild',
+                            StubRequest('foo', 'bar'))
 
     def test_actionAllowed_AuthPositive(self):
         z = Authz(auth=StubAuth('jrobinson'),
                   stopBuild='auth')
-        d = z.actionAllowed('stopBuild', StubRequest('jrobinson', 'bar'))
-        def check(res):
-            self.assertEqual(res, True)
-        d.addCallback(check)
-        return d
+        assert z.actionAllowed('stopBuild',
+                            StubRequest('jrobinson', 'bar'))
 
     def test_actionAllowed_AuthNegative(self):
         z = Authz(auth=StubAuth('jrobinson'),
                   stopBuild='auth')
-        d = z.actionAllowed('stopBuild', StubRequest('apeterson', 'bar'))
-        def check(res):
-            self.assertEqual(res, False)
-        d.addCallback(check)
-        return d
+        assert not z.actionAllowed('stopBuild',
+                            StubRequest('apeterson', 'bar'))
 
     def test_actionAllowed_AuthCallable(self):
         myargs = []
@@ -92,33 +72,24 @@ class TestAuthz(unittest.TestCase):
             myargs.extend(args)
         z = Authz(auth=StubAuth('uu'),
                   stopBuild=myAuthzFn)
-        d = z.actionAllowed('stopBuild', StubRequest('uu', 'shh'), 'arg', 'arg2')
-        def check(res):
-            self.assertEqual(myargs, ['uu', 'arg', 'arg2'])
-        d.addCallback(check)
-        return d
+        z.actionAllowed('stopBuild', StubRequest('uu', 'shh'), 'arg', 'arg2')
+        self.assertEqual(myargs, ['uu', 'arg', 'arg2'])
 
     def test_actionAllowed_AuthCallableTrue(self):
         def myAuthzFn(*args):
             return True
         z = Authz(auth=StubAuth('uu'),
                   stopBuild=myAuthzFn)
-        d = z.actionAllowed('stopBuild', StubRequest('uu', 'shh'))
-        def check(res):
-            self.assertEqual(res, True)
-        d.addCallback(check)
-        return d
+        self.assertTrue(z.actionAllowed('stopBuild',
+                            StubRequest('uu', 'shh')))
 
     def test_actionAllowed_AuthCallableFalse(self):
         def myAuthzFn(*args):
             return False
         z = Authz(auth=StubAuth('uu'),
                   stopBuild=myAuthzFn)
-        d = z.actionAllowed('stopBuild', StubRequest('uu', 'shh'))
-        def check(res):
-            self.assertEqual(res, False)
-        d.addCallback(check)
-        return d
+        self.assertFalse(z.actionAllowed('stopBuild',
+                            StubRequest('uu', 'shh')))
 
     def test_advertiseAction_False(self):
         z = Authz(forceBuild = False)

@@ -14,11 +14,10 @@
 # Copyright Buildbot Team Members
 
 
-import re
 import os
 import signal
+import time
 import textwrap
-import socket
 
 from zope.interface import implements
 from twisted.python import log, components
@@ -28,6 +27,7 @@ from twisted.application.internet import TimerService
 
 import buildbot
 import buildbot.pbmanager
+from buildbot import cache
 from buildbot.util import safeTranslate, subscription, epoch2datetime
 from buildbot.process.builder import Builder
 from buildbot.status.master import Status
@@ -43,9 +43,6 @@ from buildbot.schedulers.base import isScheduler
 from buildbot.process.botmaster import BotMaster
 from buildbot.process import debug
 from buildbot.process import metrics
-from buildbot.process import cache
-from buildbot.process.users import users
-from buildbot.process.users.manager import UserManager
 from buildbot.status.results import SUCCESS, WARNINGS, FAILURE
 from buildbot import monkeypatches
 
@@ -99,6 +96,13 @@ class BuildMaster(service.MultiService):
         self.change_svc = ChangeManager()
         self.change_svc.setServiceParent(self)
 
+        try:
+            hostname = os.uname()[1] # only on unix
+        except AttributeError:
+            hostname = "?"
+        self.master_name = "%s:%s" % (hostname, os.path.abspath(self.basedir))
+        self.master_incarnation = "pid%d-boot%d" % (os.getpid(), time.time())
+
         self.botmaster = BotMaster(self)
         self.botmaster.setName("botmaster")
         self.botmaster.setServiceParent(self)
@@ -106,9 +110,6 @@ class BuildMaster(service.MultiService):
         self.scheduler_manager = SchedulerManager(self)
         self.scheduler_manager.setName('scheduler_manager')
         self.scheduler_manager.setServiceParent(self)
-
-        self.user_manager = UserManager()
-        self.user_manager.setServiceParent(self)
 
         self.caches = cache.CacheManager()
 
@@ -146,9 +147,6 @@ class BuildMaster(service.MultiService):
         # points are initialized)
         self.status = Status(self)
 
-        # local cache for this master's object ID
-        self._object_id = None
-
     def startService(self):
         # first, apply all monkeypatches
         monkeypatches.patch_all()
@@ -161,7 +159,6 @@ class BuildMaster(service.MultiService):
             # the config file, and it would be nice for the user to discover
             # this quickly.
             self.loadTheConfigFile()
-
         if hasattr(signal, "SIGHUP"):
             signal.signal(signal.SIGHUP, self._handleSIGHUP)
         for b in self.botmaster.builders.values():
@@ -241,7 +238,7 @@ class BuildMaster(service.MultiService):
                           "schedulers", "builders", "mergeRequests",
                           "slavePortnum", "debugPassword", "logCompressionLimit",
                           "manhole", "status", "projectName", "projectURL",
-                          "title", "titleURL", "user_managers",
+                          "title", "titleURL",
                           "buildbotURL", "properties", "prioritizeBuilders",
                           "eventHorizon", "buildCacheSize", "changeCacheSize",
                           "logHorizon", "buildHorizon", "changeHorizon",
@@ -253,91 +250,67 @@ class BuildMaster(service.MultiService):
                 if k not in known_keys:
                     log.msg("unknown key '%s' defined in config dictionary" % k)
 
-            required_keys = ('schedulers','builders','slavePortnum')
-            missing_required_keys=[]
-            for k in required_keys:
-                if k not in config.keys():
-                    log.err("Missing required key '%s'"%k)
-                    missing_required_keys.append(k)
-
-            if missing_required_keys:
-                m='required keys %s are missing from configuration'%" ".join(["'%s'"%rk for rk in missing_required_keys])
-                raise KeyError(m)
-
-
             # load known keys into local vars, applying defaults
 
-            # required
-            schedulers = config['schedulers']
-            builders = config['builders']
-            slavePortnum = config['slavePortnum']
-            #slaves = config['slaves']
-            #change_source = config['change_source']
+            try:
+                # required
+                schedulers = config['schedulers']
+                builders = config['builders']
+                slavePortnum = config['slavePortnum']
+                #slaves = config['slaves']
+                #change_source = config['change_source']
 
-            # optional
-            db_url = config.get("db_url", "sqlite:///state.sqlite")
-            db_poll_interval = config.get("db_poll_interval", None)
-            debugPassword = config.get('debugPassword')
-            manhole = config.get('manhole')
-            status = config.get('status', [])
-            user_managers = config.get('user_managers', [])
-            # projectName/projectURL still supported to avoid
-            # breaking legacy configurations
-            title = config.get('title', config.get('projectName'))
-            titleURL = config.get('titleURL', config.get('projectURL'))
-            buildbotURL = config.get('buildbotURL')
-            properties = config.get('properties', {})
-            buildCacheSize = config.get('buildCacheSize', None)
-            changeCacheSize = config.get('changeCacheSize', None)
-            eventHorizon = config.get('eventHorizon', 50)
-            logHorizon = config.get('logHorizon', None)
-            buildHorizon = config.get('buildHorizon', None)
-            logCompressionLimit = config.get('logCompressionLimit', 4*1024)
-            if logCompressionLimit is not None and not \
-                   isinstance(logCompressionLimit, int):
-                raise ValueError("logCompressionLimit needs to be bool or int")
-            logCompressionMethod = config.get('logCompressionMethod', "bz2")
-            if logCompressionMethod not in ('bz2', 'gz'):
-                raise ValueError("logCompressionMethod needs to be 'bz2', or 'gz'")
-            logMaxSize = config.get('logMaxSize')
-            if logMaxSize is not None and not \
-                   isinstance(logMaxSize, int):
-                raise ValueError("logMaxSize needs to be None or int")
-            logMaxTailSize = config.get('logMaxTailSize')
-            if logMaxTailSize is not None and not \
-                   isinstance(logMaxTailSize, int):
-                raise ValueError("logMaxTailSize needs to be None or int")
-            mergeRequests = config.get('mergeRequests')
-            if (mergeRequests not in (None, True, False)
-                and not callable(mergeRequests)):
-                raise ValueError("mergeRequests must be a callable or False")
-            prioritizeBuilders = config.get('prioritizeBuilders')
-            if prioritizeBuilders is not None and not callable(prioritizeBuilders):
-                raise ValueError("prioritizeBuilders must be callable")
-            changeHorizon = config.get("changeHorizon")
-            if changeHorizon is not None and not isinstance(changeHorizon, int):
-                raise ValueError("changeHorizon needs to be an int")
+                # optional
+                db_url = config.get("db_url", "sqlite:///state.sqlite")
+                db_poll_interval = config.get("db_poll_interval", None)
+                debugPassword = config.get('debugPassword')
+                manhole = config.get('manhole')
+                status = config.get('status', [])
+                # projectName/projectURL still supported to avoid
+                # breaking legacy configurations
+                title = config.get('title', config.get('projectName'))
+                titleURL = config.get('titleURL', config.get('projectURL'))
+                buildbotURL = config.get('buildbotURL')
+                properties = config.get('properties', {})
+                buildCacheSize = config.get('buildCacheSize', None)
+                changeCacheSize = config.get('changeCacheSize', None)
+                eventHorizon = config.get('eventHorizon', 50)
+                logHorizon = config.get('logHorizon', None)
+                buildHorizon = config.get('buildHorizon', None)
+                logCompressionLimit = config.get('logCompressionLimit', 4*1024)
+                if logCompressionLimit is not None and not \
+                        isinstance(logCompressionLimit, int):
+                    raise ValueError("logCompressionLimit needs to be bool or int")
+                logCompressionMethod = config.get('logCompressionMethod', "bz2")
+                if logCompressionMethod not in ('bz2', 'gz'):
+                    raise ValueError("logCompressionMethod needs to be 'bz2', or 'gz'")
+                logMaxSize = config.get('logMaxSize')
+                if logMaxSize is not None and not \
+                        isinstance(logMaxSize, int):
+                    raise ValueError("logMaxSize needs to be None or int")
+                logMaxTailSize = config.get('logMaxTailSize')
+                if logMaxTailSize is not None and not \
+                        isinstance(logMaxTailSize, int):
+                    raise ValueError("logMaxTailSize needs to be None or int")
+                mergeRequests = config.get('mergeRequests')
+                if mergeRequests not in (None, False) and not callable(mergeRequests):
+                    raise ValueError("mergeRequests must be a callable or False")
+                prioritizeBuilders = config.get('prioritizeBuilders')
+                if prioritizeBuilders is not None and not callable(prioritizeBuilders):
+                    raise ValueError("prioritizeBuilders must be callable")
+                changeHorizon = config.get("changeHorizon")
+                if changeHorizon is not None and not isinstance(changeHorizon, int):
+                    raise ValueError("changeHorizon needs to be an int")
 
-            multiMaster = config.get("multiMaster", False)
+                multiMaster = config.get("multiMaster", False)
 
-            metrics_config = config.get("metrics")
-            caches_config = config.get("caches", {})
+                metrics_config = config.get("metrics")
+                caches_config = config.get("caches", {})
 
-            # load validation, with defaults, and verify no unrecognized
-            # keys are included.
-            validation_defaults = {
-                'branch' : re.compile(r'^[\w.+/~-]*$'),
-                'revision' : re.compile(r'^[ \w\.\-\/]*$'),
-                'property_name' : re.compile(r'^[\w\.\-\/\~:]*$'),
-                'property_value' : re.compile(r'^[\w\.\-\/\~:]*$'),
-                }
-            validation_config = validation_defaults.copy()
-            validation_config.update(config.get("validation", {}))
-            v_config_keys = set(validation_config.keys())
-            v_default_keys = set(validation_defaults.keys())
-            if v_config_keys > v_default_keys:
-                raise ValueError("unrecognized validation key(s): %s" %
-                                 (", ".join(v_config_keys - v_default_keys,)))
+            except KeyError:
+                log.msg("config dictionary is missing a required parameter")
+                log.msg("leaving old configuration in place")
+                raise
 
             if "sources" in config:
                 m = ("c['sources'] is deprecated as of 0.7.6 and is no longer "
@@ -361,7 +334,6 @@ class BuildMaster(service.MultiService):
                 raise KeyError("must have a 'slaves' key")
 
             self.config.changeHorizon = changeHorizon
-            self.config.validation = validation_config
 
             change_source = config.get('change_source', [])
             if isinstance(change_source, (list, tuple)):
@@ -389,10 +361,8 @@ class BuildMaster(service.MultiService):
                 assert interfaces.IChangeSource(s, None)
             self.checkConfig_Schedulers(schedulers)
             assert isinstance(status, (list, tuple))
-
             for s in status:
-                assert interfaces.IStatusReceiver.providedBy(s)
-                s.checkConfig(status)
+                assert interfaces.IStatusReceiver(s, None)
 
             slavenames = [s.slavename for s in slaves]
             buildernames = []
@@ -570,9 +540,6 @@ class BuildMaster(service.MultiService):
             # and Sources go after Schedulers for the same reason
             d.addCallback(lambda res: self.loadConfig_Sources(change_sources))
 
-            # users managers (right now just CommandlineUserManager)
-            d.addCallback(lambda res: self.loadConfig_UsersManagers(user_managers))
-
             # debug client
             d.addCallback(lambda res: self.loadConfig_DebugClient(debugPassword))
 
@@ -678,33 +645,6 @@ class BuildMaster(service.MultiService):
             timer.stop()
             metrics.MetricCountEvent.log("num_sources",
                 len(list(self.change_svc)), absolute=True)
-            return _
-        d.addBoth(logCount)
-        return d
-
-    def loadConfig_UsersManagers(self, managers):
-        if not managers:
-            # wasn't given in master.cfg
-            return
-
-        timer = metrics.Timer("BuildMaster.loadConfig_UsersManagers()")
-        timer.start()
-
-        # shut down any that were removed, start any that were added
-        deleted_um = [um for um in self.user_manager if um not in managers]
-        added_um = [um for um in managers if um not in self.user_manager]
-        log.msg("adding %d new user_managers, removing %d" %
-                (len(added_um), len(deleted_um)))
-        dl = [self.user_manager.removeManualComponent(um) for um in deleted_um]
-        def addNewOnes(res):
-            [self.user_manager.addManualComponent(um) for um in added_um]
-        d = defer.DeferredList(dl, fireOnOneErrback=1, consumeErrors=0)
-        d.addCallback(addNewOnes)
-
-        def logCount(_):
-            timer.stop()
-            metrics.MetricCountEvent.log("num_user_managers",
-                len(list(self.user_manager)), absolute=True)
             return _
         d.addBoth(logCount)
         return d
@@ -859,39 +799,12 @@ class BuildMaster(service.MultiService):
         d.addBoth(logCount)
         return d
 
-    ## informational methods
-
-    def getObjectId(self):
-        """
-        Return the obejct id for this master, for associating state with the master.
-
-        @returns: ID, via Deferred
-        """
-        # try to get the cached value
-        if self._object_id is not None:
-            return defer.succeed(self._object_id)
-
-        # failing that, get it from the DB; multiple calls to this function
-        # at the same time will not hurt
-        try:
-            hostname = os.uname()[1] # only on unix
-        except AttributeError:
-            hostname = socket.getfqdn()
-        master_name = "%s:%s" % (hostname, os.path.abspath(self.basedir))
-
-        d = self.db.state.getObjectId(master_name, "BuildMaster")
-        def keep(id):
-            self._object_id = id
-        d.addCallback(keep)
-        return d
-
-
     ## triggering methods and subscriptions
 
     def addChange(self, who=None, files=None, comments=None, author=None,
             isdir=None, is_dir=None, links=None, revision=None, when=None,
             when_timestamp=None, branch=None, category=None, revlink='',
-            properties={}, repository='', project='', src=None):
+            properties={}, repository='', project=''):
         """
         Add a change to the buildmaster and act on it.
 
@@ -952,9 +865,6 @@ class BuildMaster(service.MultiService):
         @param project: the project this change is a part of
         @type project: unicode string
 
-        @param src: source of the change (vcs or other)
-        @type src: string
-
         @returns: L{Change} instance via Deferred
         """
         metrics.MetricCountEvent.log("added_changes", 1)
@@ -984,21 +894,11 @@ class BuildMaster(service.MultiService):
         for n in properties:
             properties[n] = (properties[n], 'Change')
 
-        d = defer.succeed(None)
-        if src:
-            # create user object, returning a corresponding uid
-            d.addCallback(lambda _ : users.createUserObject(self, author, src))
-
-        # add the Change to the database
-        d.addCallback(lambda uid :
-                          self.db.changes.addChange(author=author, files=files,
-                                          comments=comments, is_dir=is_dir,
-                                          links=links, revision=revision,
-                                          when_timestamp=when_timestamp,
-                                          branch=branch, category=category,
-                                          revlink=revlink, properties=properties,
-                                          repository=repository, project=project,
-                                          uid=uid))
+        d = self.db.changes.addChange(author=author, files=files,
+                comments=comments, is_dir=is_dir, links=links,
+                revision=revision, when_timestamp=when_timestamp,
+                branch=branch, category=category, revlink=revlink,
+                properties=properties, repository=repository, project=project)
 
         # convert the changeid to a Change instance
         d.addCallback(lambda changeid :
@@ -1227,13 +1127,23 @@ class BuildMaster(service.MultiService):
         timer.stop()
 
     _last_unclaimed_brids_set = None
-    _last_claim_cleanup = 0
+    _last_claim_cleanup = None
     @defer.deferredGenerator
     def pollDatabaseBuildRequests(self):
         # deal with cleaning up unclaimed requests, and (if necessary)
         # requests from a previous instance of this master
         timer = metrics.Timer("BuildMaster.pollDatabaseBuildRequests()")
         timer.start()
+
+        if self._last_claim_cleanup is None:
+            self._last_claim_cleanup = 0
+
+            # first time through - clean up any builds belonging to a previous
+            # instance
+            wfd = defer.waitForDeferred(
+                    self.db.buildrequests.unclaimOldIncarnationRequests())
+            yield wfd
+            wfd.getResult()
 
         # cleanup unclaimed builds
         since_last_cleanup = reactor.seconds() - self._last_claim_cleanup 

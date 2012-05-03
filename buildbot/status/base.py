@@ -83,9 +83,6 @@ class StatusReceiver:
     def slaveDisconnected(self, slaveName):
         pass
 
-    def checkConfig(self, otherStatusReceivers):
-        pass
-
 class StatusReceiverMultiService(StatusReceiver, service.MultiService,
                                  util.ComparableMixin):
     implements(IStatusReceiver)

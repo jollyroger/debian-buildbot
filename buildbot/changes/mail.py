@@ -55,12 +55,9 @@ class MaildirSource(MaildirService, util.ComparableMixin):
             return self.parse_file(f, self.prefix)
         d.addCallback(parse_file)
 
-        def add_change(chtuple):
-            src, chdict = None, None
-            if chtuple:
-                src, chdict = chtuple
+        def add_change(chdict):
             if chdict:
-                return self.master.addChange(src=src, **chdict)
+                return self.master.addChange(**chdict)
             else:
                 log.msg("no change found in maildir file '%s'" % filename)
         d.addCallback(add_change)
@@ -244,11 +241,19 @@ class CVSMaildirSource(MaildirSource):
         comments = comments.rstrip() + "\n"
         if comments == '\n':
             comments = None
-        return ('cvs', dict(who=who, files=files, comments=comments,
-                            isdir=isdir, when=when, branch=branch,
-                            revision=rev, category=category,
-                            repository=cvsroot, project=project,
-                            links=links, properties=self.properties))
+        return dict(
+                who=who,
+                files=files,
+                comments=comments,
+                isdir=isdir,
+                when=when,
+                branch=branch,
+                revision=rev,
+                category=category,
+                repository=cvsroot,
+                project=project,
+                links=links,
+                properties=self.properties)
 
 # svn "commit-email.pl" handler.  The format is very similar to freshcvs mail;
 # here's a sample:
@@ -374,8 +379,12 @@ class SVNCommitEmailMaildirSource(MaildirSource):
             log.msg("no matching files found, ignoring commit")
             return None
 
-        return ('svn', dict(who=who, files=files, comments=comments,
-                            when=when, revision=rev))
+        return dict(
+                who=who,
+                files=files,
+                comments=comments,
+                when=when,
+                revision=rev)
 
 # bzr Launchpad branch subscription mails. Sample mail:
 #
@@ -503,10 +512,14 @@ class BzrLaunchpadEmailMaildirSource(MaildirSource):
                     branch = None
 
         if rev and who:
-            return ('bzr', dict(who=who, files=d['files'],
-                                comments=d['comments'],
-                                when=when, revision=rev,
-                                branch=branch, repository=repository or ''))
+            return dict(
+                    who=who,
+                    files=d['files'],
+                    comments=d['comments'],
+                    when=when,
+                    revision=rev,
+                    branch=branch,
+                    repository=repository or '')
         else:
             return None
 

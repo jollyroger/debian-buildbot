@@ -23,7 +23,8 @@
 #   c['change_source'] = [ poller ]
 #
 
-import datetime
+from time import strptime
+from calendar import timegm
 from xml.dom import minidom, Node
 
 from twisted.python import log, failure
@@ -31,8 +32,7 @@ from twisted.internet import defer, reactor
 from twisted.internet.task import LoopingCall
 from twisted.web.client import getPage
 
-from buildbot.changes import base
-
+from buildbot.changes import base, changes
 
 def googleCodePollerForProject(project, vcs, pollinterval=3600):
     return GoogleCodeAtomPoller(
@@ -42,8 +42,7 @@ def googleCodePollerForProject(project, vcs, pollinterval=3600):
 
 class GoogleCodeAtomPoller(base.ChangeSource):
     """This source will poll a GoogleCode Atom feed for changes and
-    submit them to the change master. Works for both Svn, Git, and Hg
-    repos.
+    submit them to the change master. Works for both Svn and Hg repos.
     TODO: branch processing
     """
 
@@ -69,17 +68,6 @@ class GoogleCodeAtomPoller(base.ChangeSource):
         self.pollinterval = pollinterval
         self.lastChange = None
         self.loop = LoopingCall(self.poll)
-        self.src = None
-        for word in self.feedurl.split('/'):
-            if word == 'svnchanges':
-                self.src = 'svn'
-                break
-            elif word == 'hgchanges':
-                self.src = 'hg'
-                break
-            elif word == 'gitchanges':
-                self.src = 'git'
-                break
 
     def startService(self):
         log.msg("GoogleCodeAtomPoller starting")
@@ -140,9 +128,9 @@ class GoogleCodeAtomPoller(base.ChangeSource):
             if d["revision"] == self.lastChange:
                 break  # no more new changes
 
-            d["when"] = datetime.datetime.strptime(
+            d["when"] = timegm(strptime(
                 i.getElementsByTagName("updated")[0].firstChild.data,
-                "%Y-%m-%dT%H:%M:%SZ")
+                "%Y-%m-%dT%H:%M:%SZ"))
             d["author"] = i.getElementsByTagName(
                 "author")[0].getElementsByTagName("name")[0].firstChild.data
             # files and commit msg are separated by 2 consecutive <br/>
@@ -166,22 +154,18 @@ class GoogleCodeAtomPoller(base.ChangeSource):
         changes.reverse() # want them in chronological order
         return changes
 
-    @defer.deferredGenerator
     def _process_changes(self, query):
         change_list = self._parse_changes(query)
 
         # Skip calling addChange() if this is the first successful poll.
         if self.lastChange is not None:
             for change in change_list:
-                d = self.master.addChange(author=change["author"],
-                                          revision=change["revision"],
-                                          files=change["files"],
-                                          comments=change["comments"],
-                                          when_timestamp=change["when"],
-                                          branch=self.branch,
-                                          src=self.src)
-                wfd = defer.waitForDeferred(d)
-                yield wfd
-                results = wfd.getResult()
+                c = changes.Change(revision = change["revision"],
+                                   who = change["author"],
+                                   files = change["files"],
+                                   comments = change["comments"],
+                                   when = change["when"],
+                                   branch = self.branch)
+                self.parent.addChange(c)
         if change_list:
             self.lastChange = change_list[-1]["revision"]

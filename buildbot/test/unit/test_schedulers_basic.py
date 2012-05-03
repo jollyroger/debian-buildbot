@@ -99,8 +99,7 @@ class BaseBasicScheduler(CommonStuffMixin,
         # check that the scheduler has started to consume changes, and the
         # classifications *have* been flushed, since they will not be used
         def check(_):
-            self.assertConsumingChanges(fileIsImportant=fII, change_filter=cf,
-                                        onlyImportant=False)
+            self.assertConsumingChanges(fileIsImportant=fII, change_filter=cf)
             self.db.schedulers.assertClassifications(self.SCHEDULERID, {})
         d.addCallback(check)
         d.addCallback(lambda _ : sched.stopService())
@@ -124,8 +123,7 @@ class BaseBasicScheduler(CommonStuffMixin,
         # classification should have been acted on, so the timer should be
         # running
         def check(_):
-            self.assertConsumingChanges(fileIsImportant=None, change_filter=cf,
-                                        onlyImportant=False)
+            self.assertConsumingChanges(fileIsImportant=None, change_filter=cf)
             self.db.schedulers.assertClassifications(self.SCHEDULERID, { 20 : True })
             self.assertTrue(sched.timer_started)
         d.addCallback(check)
@@ -188,13 +186,13 @@ class BaseBasicScheduler(CommonStuffMixin,
         sched = self.makeScheduler(self.Subclass, treeStableTimer=9, branch='master')
         self.master.db.insertTestData([
             fakedb.Change(changeid=1, branch='master', when_timestamp=1110),
-            fakedb.ChangeFile(changeid=1, filename='readme.txt'),
+            fakedb.ChangeFile(changeid=1, file='readme.txt'),
             fakedb.Change(changeid=2, branch='master', when_timestamp=2220),
-            fakedb.ChangeFile(changeid=2, filename='readme.txt'),
+            fakedb.ChangeFile(changeid=2, file='readme.txt'),
             fakedb.Change(changeid=3, branch='master', when_timestamp=3330),
-            fakedb.ChangeFile(changeid=3, filename='readme.txt'),
+            fakedb.ChangeFile(changeid=3, file='readme.txt'),
             fakedb.Change(changeid=4, branch='master', when_timestamp=4440),
-            fakedb.ChangeFile(changeid=4, filename='readme.txt'),
+            fakedb.ChangeFile(changeid=4, file='readme.txt'),
         ])
         sched.startService()
 

@@ -79,12 +79,17 @@ class GerritStatusPush(StatusReceiverMultiService):
 
     def buildFinished(self, builderName, build, result):
         """Do the SSH gerrit verify command to the server."""
+        repo, git = False, False
 
         # Gerrit + Repo
-        downloads = build.getProperty("repo_downloads")
-        downloaded = build.getProperty("repo_downloaded")
-        if downloads is not None and downloaded is not None: 
-            downloaded = downloaded.split(" ")
+        try:
+            downloads = build.getProperty("repo_downloads")
+            downloaded = build.getProperty("repo_downloaded").split(" ")
+            repo = True
+        except KeyError:
+            pass
+
+        if repo:
             if downloads and 2 * len(downloads) == len(downloaded):
                 message, verified, reviewed = self.reviewCB(builderName, build, result, self.reviewArg)
                 for i in range(0, len(downloads)):
@@ -101,19 +106,24 @@ class GerritStatusPush(StatusReceiverMultiService):
             return
 
         # Gerrit + Git
-        if build.getProperty("gerrit_branch") is not None: # used only to verify Gerrit source
+        try:
+            build.getProperty("gerrit_branch") # used only to verify Gerrit source
             project = build.getProperty("project")
             revision = build.getProperty("got_revision")
-            if project is not None and revision is not None:
-                message, verified, reviewed = self.reviewCB(builderName, build, result, self.reviewArg)
-                self.sendCodeReview(project, revision, message, verified, reviewed)
-                return
+            git = True
+        except KeyError:
+            pass
+
+        if git:
+            message, verified, reviewed = self.reviewCB(builderName, build, result, self.reviewArg)
+            self.sendCodeReview(project, revision, message, verified, reviewed)
+            return
 
     def sendCodeReview(self, project, revision, message=None, verified=0, reviewed=0):
         command = ["ssh", self.gerrit_username + "@" + self.gerrit_server, "-p %d" % self.gerrit_port,
                    "gerrit", "review", "--project %s" % str(project)]
         if message:
-            command.append("--message '%s'" % message.replace("'","\""))
+            command.append("--message '%s'" % message)
         if verified:
             command.extend(["--verified %d" % int(verified)])
         if reviewed:
