@@ -33,11 +33,5 @@ override_dh_installinit:
 	cp contrib/init-scripts/buildmaster.default ${DESTDIR}/etc/default/buildmaster
 	dh_installinit --name=buildmaster --onlyscripts
 
-override_dh_fixperms:
-	dh_fixperms
-	# Temporary fix for lintian warning until the next buildbot release where
-	# the issue is fixed.
-	find ${DESTDIR}/usr/share/pyshared/ -type f -name '*.py' -exec chmod 644 {} \;
-
 override_dh_installchangelogs:
 	dh_installchangelogs --keep NEWS 
