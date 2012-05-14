@@ -1,7 +1,7 @@
 Description: fix interpreters in contrib python scripts
  Upstream is not interested in this patch and considers it Debian-specific.
 Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
-Last-Update: 2012-05-15
+Last-Update: 2012-05-06
 --- a/contrib/bzr_buildbot.py
 +++ b/contrib/bzr_buildbot.py
 @@ -1,3 +1,4 @@
@@ -31,11 +31,3 @@ Last-Update: 2012-05-15
  import urllib
  
  from twisted.python import log
---- a/contrib/bk_buildbot.py
-+++ b/contrib/bk_buildbot.py
-@@ -1,4 +1,4 @@
--#!/usr/local/bin/python
-+#!/usr/bin/python
- #
- # BitKeeper hook script.
- #
