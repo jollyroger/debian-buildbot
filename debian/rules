@@ -21,7 +21,7 @@ override_dh_auto_test:
 ifneq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
 	@echo "Skipping check (disabled in DEB_BUILD_OPTIONS)."
 else
-	python setup.py test
+	trial --reporter=bwverbose buildbot.test
 endif
 
 override_dh_python2:
