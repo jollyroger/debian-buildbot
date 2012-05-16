@@ -3,6 +3,8 @@
 DESTDIR = debian/buildbot
 export VERSION = $(shell head -n1 debian/changelog | cut -d' ' -f2 | tr -d '()')
 
+clean:
+	dh $@
 %:
 	dh $@ --with python2 --with sphinxdoc --buildsystem python_distutils
 
