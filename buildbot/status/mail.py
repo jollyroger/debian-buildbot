@@ -41,10 +41,15 @@ try:
 except ImportError:
     have_ssl = False
 
+# this incantation teaches email to output utf-8 using 7- or 8-bit encoding,
+# although it has no effect before python-2.7.
+from email import Charset
+Charset.add_charset('utf-8', Charset.SHORTEST, None, 'utf-8')
+
 from buildbot import interfaces, util, config
 from buildbot.process.users import users
 from buildbot.status import base
-from buildbot.status.results import FAILURE, SUCCESS, WARNINGS, Results
+from buildbot.status.results import FAILURE, SUCCESS, WARNINGS, EXCEPTION, Results
 
 VALID_EMAIL = re.compile("[a-zA-Z0-9\.\_\%\-\+]+@[a-zA-Z0-9\.\_\%\-]+.[a-zA-Z]{2,6}")
 
@@ -69,7 +74,8 @@ class Domain(util.ComparableMixin):
 def defaultMessage(mode, name, build, results, master_status):
     """Generate a buildbot mail message and return a tuple of message text
         and type."""
-    ss = build.getSourceStamp()
+    ss_list = build.getSourceStamps()
+    
     prev = build.getPreviousBuild()
 
     text = ""
@@ -86,12 +92,17 @@ def defaultMessage(mode, name, build, results, master_status):
             text += "The Buildbot has detected a restored build"
         else:
             text += "The Buildbot has detected a passing build"
+    elif results == EXCEPTION:
+        text += "The Buildbot has detected a build exception"
 
-    if ss and ss.project:
-        project = ss.project
-    else:
-        project = master_status.getTitle()
-    text += " on builder %s while building %s.\n" % (name, project)
+    projects = []
+    if ss_list:
+        for ss in ss_list:
+            if ss.project and ss.project not in projects:
+                projects.append(ss.project)
+    if not projects:
+        projects = [master_status.getTitle()]
+    text += " on builder %s while building %s.\n" % (name, ', '.join(projects))
 
     if master_status.getURLForThing(build):
         text += "Full details are available at:\n %s\n" % master_status.getURLForThing(build)
@@ -103,17 +114,21 @@ def defaultMessage(mode, name, build, results, master_status):
     text += "Buildslave for this Build: %s\n\n" % build.getSlavename()
     text += "Build Reason: %s\n" % build.getReason()
 
-    source = ""
-    if ss and ss.branch:
-        source += "[branch %s] " % ss.branch
-    if ss and ss.revision:
-        source += str(ss.revision)
-    else:
-        source += "HEAD"
-    if ss and ss.patch:
-        source += " (plus patch)"
+    for ss in ss_list:
+        source = ""
+        if ss and ss.branch:
+            source += "[branch %s] " % ss.branch
+        if ss and ss.revision:
+            source += str(ss.revision)
+        else:
+            source += "HEAD"
+        if ss and ss.patch:
+            source += " (plus patch)"
 
-    text += "Build Source Stamp: %s\n" % source
+        discriminator = ""
+        if ss.codebase:
+            discriminator = " '%s'" % ss.codebase
+        text += "Build Source Stamp%s: %s\n" % (discriminator, source)
 
     text += "Blamelist: %s\n" % ",".join(build.getResponsibleUsers())
 
@@ -164,7 +179,7 @@ class MailNotifier(base.StatusReceiverMultiService):
                      "subject", "sendToInterestedUsers", "customMesg",
                      "messageFormatter", "extraHeaders"]
 
-    possible_modes = ("change", "failing", "passing", "problem", "warnings")
+    possible_modes = ("change", "failing", "passing", "problem", "warnings", "exception")
 
     def __init__(self, fromaddr, mode=("failing", "passing", "warnings"),
                  categories=None, builders=None, addLogs=False,
@@ -207,6 +222,8 @@ class MailNotifier(base.StatusReceiverMultiService):
                      - "problem": send mail about a build which failed
                                   when the previous build passed
                      - "warnings": send mail if a build contain warnings
+                     - "exception": send mail if a build fails due to an exception
+                     - "all": always send mail
                      Defaults to ("failing", "passing", "warnings").
 
         @type  builders: list of strings
@@ -303,7 +320,7 @@ class MailNotifier(base.StatusReceiverMultiService):
         self.fromaddr = fromaddr
         if isinstance(mode, basestring):
             if mode == "all":
-                mode = ("failing", "passing", "warnings")
+                mode = ("failing", "passing", "warnings", "exception")
             elif mode == "warnings":
                 mode = ("failing", "warnings")
             else:
@@ -421,6 +438,8 @@ class MailNotifier(base.StatusReceiverMultiService):
                 return True
         if "warnings" in self.mode and results == WARNINGS:
             return True
+        if "exception" in self.mode and results == EXCEPTION:
+            return True
 
         return False
 
@@ -439,13 +458,14 @@ class MailNotifier(base.StatusReceiverMultiService):
     def _gotBuilds(self, res, buildset):
         builds = []
         for (builddictlist, builder) in res:
-                for builddict in builddictlist:
-                    build = builder.getBuild(builddict['number'])
-                    if build is not None and self.isMailNeeded(build, build.results):
-                        builds.append(build)
+            for builddict in builddictlist:
+                build = builder.getBuild(builddict['number'])
+                if build is not None and self.isMailNeeded(build, build.results):
+                    builds.append(build)
 
-        self.buildMessage("Buildset Complete: " + buildset['reason'], builds,
-                          buildset['results'])
+        if builds:
+            self.buildMessage("Buildset Complete: " + buildset['reason'], builds,
+                              buildset['results'])
         
     def _gotBuildRequests(self, breqs, buildset):
         dl = []
@@ -453,7 +473,8 @@ class MailNotifier(base.StatusReceiverMultiService):
             buildername = breq['buildername']
             builder = self.master_status.getBuilder(buildername)
             d = self.master.db.builds.getBuildsForRequest(breq['brid'])
-            d.addCallback(lambda builddictlist: (builddictlist, builder))
+            d.addCallback(lambda builddictlist, builder=builder:
+                          (builddictlist, builder))
             dl.append(d)
         d = defer.gatherResults(dl)
         d.addCallback(self._gotBuilds, buildset)
@@ -495,7 +516,7 @@ class MailNotifier(base.StatusReceiverMultiService):
                  'buildText': build.getText(),
                  'buildProperties': build.getProperties(),
                  'slavename': build.getSlavename(),
-                 'reason':  build.getReason(),
+                 'reason':  build.getReason().replace('\n', ''),
                  'responsibleUsers': build.getResponsibleUsers(),
                  'branch': "",
                  'revision': "",
@@ -504,13 +525,27 @@ class MailNotifier(base.StatusReceiverMultiService):
                  'changes': [],
                  'logs': logs}
 
-        ss = build.getSourceStamp()
-        if ss:
-            attrs['branch'] = ss.branch
-            attrs['revision'] = ss.revision
-            attrs['patch'] = ss.patch
-            attrs['patch_info'] = ss.patch_info
-            attrs['changes'] = ss.changes[:]
+        ss = None
+        ss_list = build.getSourceStamps()
+
+        if ss_list:
+            if len(ss_list) == 1:
+                ss = ss_list[0]
+                if ss:
+                    attrs['branch'] = ss.branch
+                    attrs['revision'] = ss.revision
+                    attrs['patch'] = ss.patch
+                    attrs['patch_info'] = ss.patch_info
+                    attrs['changes'] = ss.changes[:]
+            else:
+                for key in ['branch', 'revision', 'patch', 'patch_info', 'changes']:
+                    attrs[key] = {}
+                for ss in ss_list:
+                    attrs['branch'][ss.codebase] = ss.branch
+                    attrs['revision'][ss.codebase] = ss.revision
+                    attrs['patch'][ss.codebase] = ss.patch
+                    attrs['patch_info'][ss.codebase] = ss.patch_info
+                    attrs['changes'][ss.codebase] = ss.changes[:]
 
         return attrs
 
@@ -593,18 +628,22 @@ class MailNotifier(base.StatusReceiverMultiService):
         # interpolation if only one build was given
         if self.extraHeaders:
             if len(builds) == 1:
-                extraHeaders = builds[0].render(self.extraHeaders)
+                d = builds[0].render(self.extraHeaders)
             else:
-                extraHeaders = self.extraHeaders
-            for k,v in extraHeaders.items():
-                if k in m:
-                    twlog.msg("Warning: Got header " + k +
-                      " in self.extraHeaders "
-                      "but it already exists in the Message - "
-                      "not adding it.")
-                m[k] = v
+                d = defer.succeed(self.extraHeaders)
+            @d.addCallback
+            def addExtraHeaders(extraHeaders):
+                for k,v in extraHeaders.items():
+                    if k in m:
+                        twlog.msg("Warning: Got header " + k +
+                          " in self.extraHeaders "
+                          "but it already exists in the Message - "
+                          "not adding it.")
+                    m[k] = v
+            d.addCallback(lambda _: m)
+            return d
     
-        return m
+        return defer.succeed(m)
     
     def buildMessageDict(self, name, build, results):
         if self.customMesg:
@@ -626,9 +665,11 @@ class MailNotifier(base.StatusReceiverMultiService):
         msgdict = {"body":""}
         
         for build in builds:
-            ss = build.getSourceStamp()
-            if ss and ss.patch and self.addPatch:
-                patches.append(ss.patch)
+            ss_list = build.getSourceStamps()
+            if self.addPatch:
+                for ss in ss_list:
+                    if ss.patch:
+                        patches.append(ss.patch)
             if self.addLogs:
                 logs.extend(build.getLogs())
             
@@ -640,22 +681,24 @@ class MailNotifier(base.StatusReceiverMultiService):
             if "subject" in tmp:
                 msgdict['subject'] = tmp['subject']
 
-        m = self.createEmail(msgdict, name, self.master_status.getTitle(),
+        d = self.createEmail(msgdict, name, self.master_status.getTitle(),
                              results, builds, patches, logs)
 
-        # now, who is this message going to?
-        if self.sendToInterestedUsers:
-            dl = []
-            for build in builds:
-                if self.lookup:
-                    d = self.useLookup(build)
-                else:
-                    d = self.useUsers(build)
-                dl.append(d)
-            d = defer.gatherResults(dl)
-        else:
-            d = defer.succeed([])
-        d.addCallback(self._gotRecipients, m)
+        @d.addCallback
+        def getRecipients(m):
+            # now, who is this message going to?
+            if self.sendToInterestedUsers:
+                dl = []
+                for build in builds:
+                    if self.lookup:
+                        d = self.useLookup(build)
+                    else:
+                        d = self.useUsers(build)
+                    dl.append(d)
+                d = defer.gatherResults(dl)
+            else:
+                d = defer.succeed([])
+            d.addCallback(self._gotRecipients, m)
         return d
 
     def useLookup(self, build):
@@ -667,35 +710,37 @@ class MailNotifier(base.StatusReceiverMultiService):
 
     def useUsers(self, build):
         dl = []
-        ss = build.getSourceStamp()
-        for change in ss.changes:
-            d = self.master.db.changes.getChangeUids(change.number)
-            def getContacts(uids):
-                def uidContactPair(contact, uid):
-                    return (contact, uid)
-                contacts = []
-                for uid in uids:
-                    d = users.getUserContact(self.master,
-                            contact_type='email',
-                            uid=uid)
-                    d.addCallback(lambda contact: uidContactPair(contact, uid))
-                    contacts.append(d)
-                return defer.gatherResults(contacts)
-            d.addCallback(getContacts)
-            def logNoMatch(contacts):
-                for pair in contacts:
-                    contact, uid = pair
-                    if contact is None:
-                        twlog.msg("Unable to find email for uid: %r" % uid)
-                return [pair[0] for pair in contacts]
-            d.addCallback(logNoMatch)
-            def addOwners(recipients):
-                owners = [e for e in build.getInterestedUsers()
-                          if e not in build.getResponsibleUsers()]
-                recipients.extend(owners)
-                return recipients
-            d.addCallback(addOwners)
-            dl.append(d)
+        ss = None
+        ss_list = build.getSourceStamps()
+        for ss in ss_list:
+            for change in ss.changes:
+                d = self.master.db.changes.getChangeUids(change.number)
+                def getContacts(uids):
+                    def uidContactPair(contact, uid):
+                        return (contact, uid)
+                    contacts = []
+                    for uid in uids:
+                        d = users.getUserContact(self.master,
+                                contact_type='email',
+                                uid=uid)
+                        d.addCallback(lambda contact: uidContactPair(contact, uid))
+                        contacts.append(d)
+                    return defer.gatherResults(contacts)
+                d.addCallback(getContacts)
+                def logNoMatch(contacts):
+                    for pair in contacts:
+                        contact, uid = pair
+                        if contact is None:
+                            twlog.msg("Unable to find email for uid: %r" % uid)
+                    return [pair[0] for pair in contacts]
+                d.addCallback(logNoMatch)
+                def addOwners(recipients):
+                    owners = [e for e in build.getInterestedUsers()
+                              if e not in build.getResponsibleUsers()]
+                    recipients.extend(owners)
+                    return recipients
+                d.addCallback(addOwners)
+                dl.append(d)
         d = defer.gatherResults(dl)
         @d.addCallback
         def gatherRecipients(res):
