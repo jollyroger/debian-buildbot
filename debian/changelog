@@ -1,3 +1,17 @@
+buildbot (0.8.7-1) unstable; urgency=low
+
+  * New upstream release.
+  * Update patches
+  * Remove temporary code for fixing permissions
+  * Use /usr/bin/trial to run tests
+  * Fix interpreter for contrib/bk_buildbot.py
+  * Revert "Fix interpreter for contrib/bk_buildbot.py"
+  * Run dh clean with no extra arguments
+  * Add python-dateutil to Depends and Build-Depends
+  * Introduce config for git-buildpackage: debian/gbp.conf
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 18 May 2012 16:25:39 +0300
+
 buildbot (0.8.6p1-1) unstable; urgency=low
 
   * New upstream release (Closes: #669474).
