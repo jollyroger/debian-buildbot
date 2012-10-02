@@ -3,11 +3,11 @@ Description: Comment out example buildslave instance
  init-scripts themselves are contributed so not much connected with buildbot
  itself.
 Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
-Last-Update: 2011-03-01
+Last-Update: 2012-05-06
 
 --- a/contrib/init-scripts/buildmaster.init.sh
 +++ b/contrib/init-scripts/buildmaster.init.sh
-@@ -19,15 +19,6 @@
+@@ -22,15 +22,6 @@
  
  # Source buildmaster configuration
  [[ -r /etc/default/buildmaster ]] && . /etc/default/buildmaster

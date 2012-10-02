@@ -3,6 +3,8 @@
 DESTDIR = debian/buildbot
 export VERSION = $(shell head -n1 debian/changelog | cut -d' ' -f2 | tr -d '()')
 
+clean:
+	dh $@
 %:
 	dh $@ --with python2 --with sphinxdoc --buildsystem python_distutils
 
@@ -21,7 +23,7 @@ override_dh_auto_test:
 ifneq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
 	@echo "Skipping check (disabled in DEB_BUILD_OPTIONS)."
 else
-	python setup.py test
+	trial --reporter=bwverbose buildbot.test
 endif
 
 override_dh_python2:
@@ -32,12 +34,6 @@ override_dh_installinit:
 	cp contrib/init-scripts/buildmaster.init.sh ${DESTDIR}/etc/init.d/buildmaster
 	cp contrib/init-scripts/buildmaster.default ${DESTDIR}/etc/default/buildmaster
 	dh_installinit --name=buildmaster --onlyscripts
-
-override_dh_fixperms:
-	dh_fixperms
-	# Temporary fix for lintian warning until the next buildbot release where
-	# the issue is fixed.
-	find ${DESTDIR}/usr/share/pyshared/ -type f -name '*.py' -exec chmod 644 {} \;
 
 override_dh_installchangelogs:
 	dh_installchangelogs --keep NEWS 
