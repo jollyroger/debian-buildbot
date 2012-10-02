@@ -20,6 +20,7 @@ from buildbot.status.results import SUCCESS, FAILURE
 from buildbot.test.util import sourcesteps
 from buildbot.process import buildstep
 from buildbot.test.fake.remotecommand import ExpectShell, Expect
+from buildbot.test.util.properties import ConstantRenderable
 from buildbot import config
 
 class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
@@ -54,14 +55,9 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
         return self.tearDownSourceStep()
 
     def patch_slaveVersionIsOlderThan(self, result):
-        svn.SVN.slaveVersionIsOlderThan = lambda x, y, z: result
+        self.patch(svn.SVN, 'slaveVersionIsOlderThan', lambda x, y, z: result)
 
-    def test_repourl_and_baseURL(self):
-        self.assertRaises(config.ConfigErrors, lambda :
-                svn.SVN(repourl='http://svn.local/app/trunk',
-                        baseURL='http://svn.local/app/trunk'))
-
-    def test_no_repourl_and_baseURL(self):
+    def test_no_repourl(self):
         self.assertRaises(config.ConfigErrors, lambda :
                 svn.SVN())
 
@@ -108,10 +104,48 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
         self.expectOutcome(result=SUCCESS, status_text=["update"])
         return self.runStep()
 
-    def test_mode_incremental_baseURL(self):
+    def test_mode_incremental_timeout(self):
         self.setupStep(
-                svn.SVN(baseURL='http://svn.local/', mode='incremental',
-                        defaultBranch='trunk'))
+                svn.SVN(repourl='http://svn.local/app/trunk',
+                        mode='incremental',username='user',
+                        timeout=1,
+                        password='pass', extra_args=['--random']))
+        self.expectCommands(
+            ExpectShell(workdir='wkdir',
+                        timeout=1,
+                        command=['svn', '--version'])
+            + 0,
+            Expect('stat', dict(file='wkdir/.svn',
+                                logEnviron=True))
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        timeout=1,
+                        command=['svn', 'info', '--non-interactive',
+                                 '--no-auth-cache', '--username', 'user',
+                                 '--password', 'pass', '--random'])
+            + ExpectShell.log('stdio',
+                stdout="URL: http://svn.local/app/trunk")
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        timeout=1,
+                        command=['svn', 'update', '--non-interactive',
+                                 '--no-auth-cache', '--username', 'user',
+                                 '--password', 'pass', '--random'])
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        timeout=1,
+                        command=['svnversion'])
+            + ExpectShell.log('stdio',
+                stdout='100')
+            + 0,
+        )
+        self.expectOutcome(result=SUCCESS, status_text=["update"])
+        return self.runStep()
+
+    def test_mode_incremental_repourl_renderable(self):
+        self.setupStep(
+                svn.SVN(repourl=ConstantRenderable('http://svn.local/trunk'),
+                        mode='incremental'))
         self.expectCommands(
             ExpectShell(workdir='wkdir',
                         command=['svn', '--version'])
@@ -138,10 +172,10 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
         self.expectOutcome(result=SUCCESS, status_text=["update"])
         return self.runStep()
 
-    def test_mode_incremental_baseURL_not_updatable(self):
+    def test_mode_incremental_repourl_not_updatable(self):
         self.setupStep(
-                svn.SVN(baseURL='http://svn.local/%%BRANCH%%/app', mode='incremental',
-                        defaultBranch='trunk'))
+                svn.SVN(repourl=ConstantRenderable('http://svn.local/trunk/app'),
+                        mode='incremental',))
         self.expectCommands(
             ExpectShell(workdir='wkdir',
                         command=['svn', '--version'])
@@ -164,10 +198,10 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
         self.expectOutcome(result=SUCCESS, status_text=["update"])
         return self.runStep()
 
-    def test_mode_incremental_baseURL_not_updatable_svninfo_mismatch(self):
+    def test_mode_incremental_repourl_not_updatable_svninfo_mismatch(self):
         self.setupStep(
-                svn.SVN(baseURL='http://svn.local/%%BRANCH%%/app',
-                    mode='incremental', defaultBranch='trunk'))
+                svn.SVN(repourl=ConstantRenderable('http://svn.local/trunk/app'),
+                    mode='incremental'))
         self.expectCommands(
             ExpectShell(workdir='wkdir',
                         command=['svn', '--version'])
@@ -386,7 +420,7 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
                 stdout=self.svn_st_xml)
             + 0,
             Expect('rmdir', {'dir':
-                             'wkdir/svn_external_path/unversioned_file2',
+                             ['wkdir/svn_external_path/unversioned_file2'],
                              'logEnviron': True})
             + 0,
             ExpectShell(workdir='wkdir',
@@ -532,7 +566,7 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
         self.setupStep(
                 svn.SVN(repourl='http://svn.local/app/trunk',
                                     mode='full', method='clean'))
-        self.patch_slaveVersionIsOlderThan(False)
+        self.patch_slaveVersionIsOlderThan(True)
         self.expectCommands(
             ExpectShell(workdir='wkdir',
                         command=['svn', '--version'])
@@ -578,7 +612,7 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
                 svn.SVN(repourl='http://svn.local/app/trunk',
                                     mode='full', method='clean'))
 
-        self.patch_slaveVersionIsOlderThan(True)
+        self.patch_slaveVersionIsOlderThan(False)
         self.expectCommands(
             ExpectShell(workdir='wkdir',
                         command=['svn', '--version'])
@@ -720,6 +754,48 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['svn', 'export', 'source', 'wkdir'])
             + 0,
             ExpectShell(workdir='source',
+                        command=['svnversion'])
+            + ExpectShell.log('stdio',
+                stdout='100')
+            + 0,
+        )
+        self.expectOutcome(result=SUCCESS, status_text=["update"])
+        return self.runStep()
+
+    def test_mode_full_export_timeout(self):
+        self.setupStep(
+                svn.SVN(repourl='http://svn.local/app/trunk',
+                                    timeout=1,
+                                    mode='full', method='export'))
+        self.expectCommands(
+            ExpectShell(workdir='wkdir',
+                        timeout=1,
+                        command=['svn', '--version'])
+            + 0,
+            Expect('rmdir', dict(dir='wkdir',
+                                 logEnviron=True))
+            + 0,
+            Expect('stat', dict(file='source/.svn',
+                                logEnviron=True))
+            + 0,
+            ExpectShell(workdir='source',
+                        timeout=1,
+                        command=['svn', 'info', '--non-interactive',
+                                 '--no-auth-cache' ])
+            + ExpectShell.log('stdio',
+                stdout="URL: http://svn.local/app/trunk")
+            + 0,
+            ExpectShell(workdir='source',
+                        timeout=1,
+                        command=['svn', 'update', '--non-interactive',
+                                 '--no-auth-cache'])
+            + 0,
+            ExpectShell(workdir='',
+                        timeout=1,
+                        command=['svn', 'export', 'source', 'wkdir'])
+            + 0,
+            ExpectShell(workdir='source',
+                        timeout=1,
                         command=['svnversion'])
             + ExpectShell.log('stdio',
                 stdout='100')
@@ -994,7 +1070,7 @@ class TestSVN(sourcesteps.SourceStepMixin, unittest.TestCase):
                 stdout=self.svn_st_xml)
             + 0,
             Expect('rmdir', {'dir':
-                             'wkdir/svn_external_path/unversioned_file2',
+                             ['wkdir/svn_external_path/unversioned_file2'],
                              'logEnviron': True})
             + 1,
         )
