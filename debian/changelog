@@ -8,6 +8,7 @@ buildbot (0.8.7p1-1) unstable; urgency=low
   * Revert "Fix interpreter for contrib/bk_buildbot.py"
   * Run dh clean with no extra arguments
   * Add python-dateutil to Depends and Build-Depends
+  * Add libaprutil1 to Build-Depends and to Recommends (required for web htpasswd auth)
   * Introduce config for git-buildpackage: debian/gbp.conf
 
  -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 18 May 2012 16:25:39 +0300
