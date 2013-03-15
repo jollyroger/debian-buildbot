@@ -3,16 +3,39 @@ Section: devel
 Priority: optional
 Maintainer: Andriy Senkovych <jolly_roger@itblog.org.ua>
 Uploaders: Matthias Klose <doko@debian.org>
-Build-Depends: debhelper (>= 7.0.50~), python-all (>= 2.6.6-3), python-jinja2 (>=2.1), python-sqlalchemy, python-migrate (>=0.6.1), python-mock, python-sphinx (>= 1.0.7+dfsg), python-twisted-core (>= 2.0), python-twisted-web, python-twisted-mail, python-twisted-words, python-dateutil, libaprutil1
+Build-Depends: debhelper (>= 7.0.50~),
+ python-all (>= 2.6.6-3),
+ python-jinja2 (>= 2.1),
+ python-sqlalchemy (>= 0.6.0),
+ python-migrate (>= 0.6.1),
+ python-mock,
+ python-sphinx (>= 1.0.7+dfsg),
+ python-twisted-core (>= 2.0),
+ python-twisted-web,
+ python-twisted-mail,
+ python-twisted-words,
+ python-dateutil (>= 1.5),
+ libaprutil1
 Homepage: http://buildbot.net
-Standards-Version: 3.9.3
+Standards-Version: 3.9.4.0
 X-Python-Version: >= 2.5
 
 Package: buildbot
 Architecture: all
-Depends: ${python:Depends}, ${misc:Depends}, ${sphinxdoc:Depends}, python-jinja2 (>=2.1), python-sqlalchemy, python-migrate (>=0.6.1), python-twisted-core (>= 2.0), python-twisted-web, python-twisted-words, adduser, dpkg (>= 1.15.4), python-dateutil
-Recommends: buildbot-slave, python-twisted-mail, libaprutil1
-Suggests: bzr | subversion | cvs | mercurial | darcs | git-core
+Depends: ${python:Depends}, ${misc:Depends}, ${sphinxdoc:Depends},
+ python-jinja2 (>=2.1),
+ python-sqlalchemy (>= 0.6.0),
+ python-migrate (>= 0.6.1),
+ python-twisted-core (>= 2.0),
+ python-twisted-web,
+ python-twisted-words,
+ python-dateutil (>= 1.5),
+ dpkg (>= 1.15.4),
+ adduser
+Recommends: buildbot-slave,
+ python-twisted-mail,
+ libaprutil1
+Suggests: bzr | subversion | cvs | mercurial | darcs | git
 Description: system to automate the compile/test cycle
  The BuildBot is a system to automate the compile/test cycle required
  by most software projects to validate code changes. By automatically

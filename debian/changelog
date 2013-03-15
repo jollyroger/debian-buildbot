@@ -1,17 +1,21 @@
 buildbot (0.8.7p1-1) unstable; urgency=low
 
-  * New upstream release.
-  * Update patches
-  * Remove temporary code for fixing permissions
-  * Use /usr/bin/trial to run tests
-  * Fix interpreter for contrib/bk_buildbot.py
-  * Revert "Fix interpreter for contrib/bk_buildbot.py"
-  * Run dh clean with no extra arguments
-  * Add python-dateutil to Depends and Build-Depends
-  * Add libaprutil1 to Build-Depends and to Recommends (required for web htpasswd auth)
-  * Introduce config for git-buildpackage: debian/gbp.conf
+  * New upstream release (Closes: #692451).
+  * Update patches.
+  * Remove temporary code for fixing permissions.
+  * Use /usr/bin/trial to run tests.
+  * Run dh clean with no extra arguments.
+  * Introduce config for git-buildpackage: debian/gbp.conf.
+  * debian/control:
+    - prettify Depends
+    - bump Standards-Version to 3.9.4.0 (no changes required)
+    - specify minimal supported version for python-sqlalchemy
+    - add python-dateutil (>=1.5) to Depends and Build-Depends (required by
+      nightly scheduler).
+    - add libaprutil1 to Build-Depends and to Recommends (required by web
+      htpasswd auth).
 
- -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 18 May 2012 16:25:39 +0300
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Fri, 15 Mar 2013 17:56:25 +0200
 
 buildbot (0.8.6p1-1) unstable; urgency=low
 
@@ -23,10 +27,10 @@ buildbot (0.8.6p1-1) unstable; urgency=low
     - bump Standards-Version to 3.9.3
     - move Matthias Klose to Uploaders
     - move Andriy Senkovych to Maintainer
-  * debian/rules: 
+  * debian/rules:
     - do not byte-compile *.py files in /usr/share/buildbot
     - remove additional files (docs/docs.tgz) in clean target
-  * debian/copyright: 
+  * debian/copyright:
     - correct syntax for common license (GPL-2)
     - update Format line to point to copyright-format 1.0
 
