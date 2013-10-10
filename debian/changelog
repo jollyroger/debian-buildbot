@@ -1,3 +1,10 @@
+buildbot (0.8.7p1-2) unstable; urgency=low
+
+  * Rebuild to update dependency on pyhton-sqlmigrate (Closes: #715471).
+  * Fix TextClient module path (Closes: #716650).
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Tue, 06 Aug 2013 17:12:23 +0300
+
 buildbot (0.8.7p1-1) unstable; urgency=low
 
   * New upstream release (Closes: #692451).
