@@ -16,13 +16,14 @@
 import mock
 from twisted.trial import unittest
 from twisted.internet import defer
-from buildbot import buildslave, config, locks
+from buildbot import config, locks
+from buildbot.buildslave import base
 from buildbot.test.fake import fakemaster, pbmanager
 from buildbot.test.fake.botmaster import FakeBotMaster
 
 class TestAbstractBuildSlave(unittest.TestCase):
 
-    class ConcreteBuildSlave(buildslave.AbstractBuildSlave):
+    class ConcreteBuildSlave(base.AbstractBuildSlave):
         pass
 
     def test_constructor_minimal(self):
@@ -212,7 +213,7 @@ class TestAbstractBuildSlave(unittest.TestCase):
         botmaster = FakeBotMaster(master)
         botmaster.startService()
         lock = locks.MasterLock('masterlock')
-        bs = self.ConcreteBuildSlave('bot', 'pass', locks = [lock])
+        bs = self.ConcreteBuildSlave('bot', 'pass', locks = [lock.access("counting")])
         bs.setServiceParent(botmaster)
 
     def test_setServiceParent_slaveLocks(self):
@@ -223,5 +224,5 @@ class TestAbstractBuildSlave(unittest.TestCase):
         botmaster = FakeBotMaster(master)
         botmaster.startService()
         lock = locks.SlaveLock('lock')
-        bs = self.ConcreteBuildSlave('bot', 'pass', locks = [lock])
+        bs = self.ConcreteBuildSlave('bot', 'pass', locks = [lock.access("counting")])
         bs.setServiceParent(botmaster)

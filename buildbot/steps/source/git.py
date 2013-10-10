@@ -16,6 +16,7 @@
 from twisted.python import log
 from twisted.internet import defer
 
+from buildbot import config as bbconfig
 from buildbot.process import buildstep
 from buildbot.steps.source.base import Source
 from buildbot.interfaces import BuildSlaveTooOldError
@@ -61,7 +62,7 @@ class Git(Source):
     def __init__(self, repourl=None, branch='HEAD', mode='incremental',
                  method=None, submodules=False, shallow=False, progress=False,
                  retryFetch=False, clobberOnFailure=False, getDescription=False,
-                 **kwargs):
+                 config=None, **kwargs):
         """
         @type  repourl: string
         @param repourl: the URL which points at the git repository
@@ -94,6 +95,9 @@ class Git(Source):
         
         @type  getDescription: boolean or dict
         @param getDescription: Use 'git describe' to describe the fetched revision
+
+        @type  config: dict
+        @param config: Git configuration options to enable when running git
         """
         if not getDescription and not isinstance(getDescription, dict):
             getDescription = False
@@ -109,19 +113,26 @@ class Git(Source):
         self.clobberOnFailure = clobberOnFailure
         self.mode = mode
         self.getDescription = getDescription
+        self.config = config
         Source.__init__(self, **kwargs)
 
-        assert self.mode in ['incremental', 'full']
-        assert self.repourl is not None
-        if self.mode == 'full':
-            assert self.method in ['clean', 'fresh', 'clobber', 'copy', None]
-        assert isinstance(self.getDescription, (bool, dict))
+        if self.mode not in ['incremental', 'full']:
+            bbconfig.error("Git: mode must be 'incremental' or 'full'.")
+        if not self.repourl:
+            bbconfig.error("Git: must provide repourl.")
+        if (self.mode == 'full' and
+                self.method not in ['clean', 'fresh', 'clobber', 'copy', None]):
+            bbconfig.error("Git: invalid method for mode 'full'.")
+        if self.shallow and (self.mode != 'full' or self.method != 'clobber'):
+            bbconfig.error("Git: shallow only possible with mode 'full' and method 'clobber'.")
+        if not isinstance(self.getDescription, (bool, dict)):
+            bbconfig.error("Git: getDescription must be a boolean or a dict.")
 
     def startVC(self, branch, revision, patch):
         self.branch = branch or 'HEAD'
         self.revision = revision
         self.method = self._getMethod()
-        self.stdio_log = self.addLog("stdio")
+        self.stdio_log = self.addLogForRemoteCommands("stdio")
 
         d = self.checkGit()
         def checkInstall(gitInstalled):
@@ -154,7 +165,7 @@ class Git(Source):
         updatable = yield self._sourcedirIsUpdatable()
         if not updatable:
             log.msg("No git repo present, making full clone")
-            yield self._doFull()
+            yield self._fullCloneOrFallback()
         elif self.method == 'clean':
             yield self.clean()
         elif self.method == 'fresh':
@@ -168,7 +179,7 @@ class Git(Source):
 
         # if not updateable, do a full checkout
         if not updatable:
-            yield self._doFull()
+            yield self._fullCloneOrFallback()
             return
 
         # test for existence of the revision; rc=1 indicates it does not exist
@@ -187,42 +198,35 @@ class Git(Source):
                 yield self._dovccmd(['branch', '-M', self.branch],
                         abandonOnFailure=False)
         else:
-            yield self._doFetch(None)
+            yield self._fetchOrFallback(None)
 
         yield self._updateSubmodule(None)
 
     def clean(self):
         command = ['clean', '-f', '-d']
         d = self._dovccmd(command)
-        d.addCallback(self._doFetch)
+        d.addCallback(self._fetchOrFallback)
         d.addCallback(self._updateSubmodule)
         d.addCallback(self._cleanSubmodule)
         return d
 
     def clobber(self):
-        cmd = buildstep.RemoteCommand('rmdir', {'dir': self.workdir,
-                                                'logEnviron': self.logEnviron,})
-        cmd.useLog(self.stdio_log, False)
-        d = self.runCommand(cmd)
-        def checkRemoval(res):
-            if res != 0:
-                raise RuntimeError("Failed to delete directory")
-            return res
-        d.addCallback(lambda _: checkRemoval(cmd.rc))
-        d.addCallback(lambda _: self._doFull())
+        d = self._doClobber()
+        d.addCallback(lambda _: self._fullClone(shallowClone=self.shallow))
         return d
 
     def fresh(self):
         command = ['clean', '-f', '-d', '-x']
         d = self._dovccmd(command)
-        d.addCallback(self._doFetch)
+        d.addCallback(self._fetchOrFallback)
         d.addCallback(self._updateSubmodule)
         d.addCallback(self._cleanSubmodule)
         return d
 
     def copy(self):
         cmd = buildstep.RemoteCommand('rmdir', {'dir': self.workdir,
-                                                'logEnviron': self.logEnviron,})
+                                                'logEnviron': self.logEnviron,
+                                                'timeout': self.timeout,})
         cmd.useLog(self.stdio_log, False)
         d = self.runCommand(cmd)
 
@@ -232,7 +236,8 @@ class Git(Source):
             cmd = buildstep.RemoteCommand('cpdir',
                                           {'fromdir': 'source',
                                            'todir':'build',
-                                           'logEnviron': self.logEnviron,})
+                                           'logEnviron': self.logEnviron,
+                                           'timeout': self.timeout,})
             cmd.useLog(self.stdio_log, False)
             d = self.runCommand(cmd)
             return d
@@ -291,7 +296,14 @@ class Git(Source):
         defer.returnValue(0)
 
     def _dovccmd(self, command, abandonOnFailure=True, collectStdout=False, initialStdin=None):
-        cmd = buildstep.RemoteShellCommand(self.workdir, ['git'] + command,
+        full_command = ['git']
+        if self.config is not None:
+            for name, value in self.config.iteritems():
+                full_command.append('-c')
+                full_command.append('%s=%s' % (name, value))
+        full_command.extend(command)
+        cmd = buildstep.RemoteShellCommand(self.workdir,
+                                           full_command,
                                            env=self.env,
                                            logEnviron=self.logEnviron,
                                            timeout=self.timeout,
@@ -342,13 +354,8 @@ class Git(Source):
             d.addCallback(renameBranch)
         return d
 
-    def patch(self, _, patch):
-        d = self._dovccmd(['apply', '--index', '-p', str(patch[0])],
-                initialStdin=patch[1])
-        return d
-
     @defer.inlineCallbacks
-    def _doFetch(self, _):
+    def _fetchOrFallback(self, _):
         """
         Handles fallbacks for failure of fetch,
         wrapper for self._fetch
@@ -360,46 +367,72 @@ class Git(Source):
         elif self.retryFetch:
             yield self._fetch(None)
         elif self.clobberOnFailure:
-            yield self.clobber()
+            yield self._doClobber()
+            yield self._fullClone()
         else:
             raise buildstep.BuildStepFailed()
 
-    def _full(self):
+    def _fullClone(self, shallowClone=False):
+        """Perform full clone and checkout to the revision if specified
+           In the case of shallow clones if any of the step fail abort whole build step.
+        """
         args = []
         if self.branch != 'HEAD':
             args += ['--branch', self.branch]
-        if self.shallow:
+        if shallowClone:
             args += ['--depth', '1']
         command = ['clone'] + args + [self.repourl, '.']
+
         #Fix references
         if self.prog:
             command.append('--progress')
 
-        d = self._dovccmd(command, not self.clobberOnFailure)
+        # If it's a shallow clone abort build step
+        d = self._dovccmd(command, shallowClone)
         # If revision specified checkout that revision
         if self.revision:
             d.addCallback(lambda _: self._dovccmd(['reset', '--hard',
                                                    self.revision, '--'],
-                                                  not self.clobberOnFailure))
+                                                   shallowClone))
         # init and update submodules, recurisively. If there's not recursion
         # it will not do it.
         if self.submodules:
             d.addCallback(lambda _: self._dovccmd(['submodule', 'update',
                                                    '--init', '--recursive'],
-                                                  not self.clobberOnFailure))
+                                                  shallowClone))
         return d
 
-    def _doFull(self):
-        d = self._full()
+    def _fullCloneOrFallback(self):
+        """Wrapper for _fullClone(). In the case of failure, if clobberOnFailure
+           is set to True remove the build directory and try a full clone again.
+        """
+
+        d = self._fullClone()
         def clobber(res):
             if res != 0:
                 if self.clobberOnFailure:
-                    return self.clobber()
+                    d = self._doClobber()
+                    d.addCallback(lambda _: self._fullClone())
+                    return d
                 else:
                     raise buildstep.BuildStepFailed()
             else:
                 return res
         d.addCallback(clobber)
+        return d
+
+    def _doClobber(self):
+        """Remove the work directory"""
+        cmd = buildstep.RemoteCommand('rmdir', {'dir': self.workdir,
+                                                'logEnviron': self.logEnviron,
+                                                'timeout': self.timeout,})
+        cmd.useLog(self.stdio_log, False)
+        d = self.runCommand(cmd)
+        def checkRemoval(res):
+            if res != 0:
+                raise RuntimeError("Failed to delete directory")
+            return res
+        d.addCallback(lambda _: checkRemoval(cmd.rc))
         return d
 
     def computeSourceRevision(self, changes):
@@ -408,16 +441,7 @@ class Git(Source):
         return changes[-1].revision
 
     def _sourcedirIsUpdatable(self):
-        cmd = buildstep.RemoteCommand('stat', {'file': self.workdir + '/.git',
-                                               'logEnviron': self.logEnviron,})
-        cmd.useLog(self.stdio_log, False)
-        d = self.runCommand(cmd)
-        def _fail(tmp):
-            if cmd.didFail():
-                return False
-            return True
-        d.addCallback(_fail)
-        return d
+        return self.pathExists(self.build.path_module.join(self.workdir, '.git'))
 
     def _updateSubmodule(self, _):
         if self.submodules:
@@ -449,4 +473,9 @@ class Git(Source):
                 return True
             return False
         d.addCallback(check)
+        return d
+
+    def patch(self, _, patch):
+        d = self._dovccmd(['apply', '--index', '-p', str(patch[0])],
+                initialStdin=patch[1])
         return d

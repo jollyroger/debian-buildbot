@@ -15,8 +15,11 @@
 
 
 import re
+import inspect
 from twisted.python import log, failure
 from twisted.spread import pb
+from twisted.python.deprecate import deprecatedModuleAttribute
+from twisted.python.versions import Version
 from buildbot.process import buildstep
 from buildbot.status.results import SUCCESS, WARNINGS, FAILURE
 from buildbot.status.logfile import STDOUT, STDERR
@@ -116,6 +119,17 @@ class ShellCommand(buildstep.LoggingBuildStep):
                 buildstep_kwargs[k] = kwargs[k]
                 del kwargs[k]
         buildstep.LoggingBuildStep.__init__(self, **buildstep_kwargs)
+
+        # check validity of arguments being passed to RemoteShellCommand
+        invalid_args = []
+        valid_rsc_args = inspect.getargspec(buildstep.RemoteShellCommand.__init__)[0]
+        for arg in kwargs.keys():
+            if arg not in valid_rsc_args:
+                invalid_args.append(arg)
+        # Raise Configuration error in case invalid arguments are present
+        if invalid_args:
+            config.error("Invalid argument(s) passed to RemoteShellCommand: "
+                         + ', '.join(invalid_args))
 
         # everything left over goes to the RemoteShellCommand
         kwargs['workdir'] = workdir # including a copy of 'workdir'
@@ -302,8 +316,7 @@ class TreeSize(ShellCommand):
             return ["treesize", "%d KiB" % self.kib]
         return ["treesize", "unknown"]
 
-
-class SetProperty(ShellCommand):
+class SetPropertyFromCommand(ShellCommand):
     name = "setproperty"
     renderables = [ 'property' ]
 
@@ -352,6 +365,13 @@ class SetProperty(ShellCommand):
         else:
             # let ShellCommand describe
             return ShellCommand.getText(self, cmd, results)
+
+
+SetProperty = SetPropertyFromCommand
+deprecatedModuleAttribute(Version("Buildbot", 0, 8, 8),
+        "It has been renamed to SetPropertyFromCommand",
+        "buildbot.steps.shell", "SetProperty")
+
 
 class Configure(ShellCommand):
 

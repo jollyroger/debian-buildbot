@@ -19,6 +19,7 @@ import os, weakref
 from zope.interface import implements
 from twisted.python import log
 from twisted.application import strports, service
+from twisted.internet import defer
 from twisted.web import server, distrib, static
 from twisted.spread import pb
 from twisted.web.util import Redirect
@@ -43,6 +44,11 @@ from buildbot.status.web.auth import AuthFailResource,AuthzFailResource, LoginRe
 from buildbot.status.web.root import RootPage
 from buildbot.status.web.users import UsersResource
 from buildbot.status.web.change_hook import ChangeHookResource
+from twisted.cred.portal import IRealm, Portal
+from twisted.cred import strcred
+from twisted.cred.checkers import ICredentialsChecker
+from twisted.cred.credentials import IUsernamePassword
+from twisted.web import resource, guard
 
 # this class contains the WebStatus class.  Basic utilities are in base.py,
 # and specific pages are each in their own module.
@@ -148,7 +154,8 @@ class WebStatus(service.MultiService):
                  order_console_by_time=False, changecommentlink=None,
                  revlink=None, projects=None, repositories=None,
                  authz=None, logRotateLength=None, maxRotatedFiles=None,
-                 change_hook_dialects = {}, provide_feeds=None, jinja_loaders=None):
+                 change_hook_dialects = {}, provide_feeds=None, jinja_loaders=None,
+                 change_hook_auth=None):
         """Run a web server that provides Buildbot status.
 
         @type  http_port: int or L{twisted.application.strports} string
@@ -313,10 +320,36 @@ class WebStatus(service.MultiService):
 
         self.authz = authz
 
+        # check for correctness of HTTP auth parameters
+        if change_hook_auth is not None:
+            self.change_hook_auth = []
+            for checker in change_hook_auth:
+                if isinstance(checker, str):
+                    try:
+                        checker = strcred.makeChecker(checker)
+                    except Exception, error:
+                        config.error("Invalid change_hook checker description: %s" % (error,))
+                        continue
+                elif not ICredentialsChecker.providedBy(checker):
+                    config.error("change_hook checker doesn't provide ICredentialChecker: %r" % (checker,))
+                    continue
+
+                if IUsernamePassword not in checker.credentialInterfaces:
+                    config.error("change_hook checker doesn't support IUsernamePassword: %r" % (checker,))
+                    continue
+
+                self.change_hook_auth.append(checker)
+        else:
+            self.change_hook_auth = None
+
         self.orderConsoleByTime = order_console_by_time
 
         # If we were given a site object, go ahead and use it. (if not, we add one later)
         self.site = site
+
+        # keep track of our child services
+        self.http_svc = None
+        self.distrib_svc = None
 
         # store the log settings until we create the site object
         self.logRotateLength = logRotateLength
@@ -340,7 +373,11 @@ class WebStatus(service.MultiService):
         self.change_hook_dialects = {}
         if change_hook_dialects:
             self.change_hook_dialects = change_hook_dialects
-            self.putChild("change_hook", ChangeHookResource(dialects = self.change_hook_dialects))
+            resource_obj = ChangeHookResource(dialects=self.change_hook_dialects)
+            if self.change_hook_auth is not None:
+                resource_obj = self.setupProtectedResource(
+                        resource_obj, self.change_hook_auth)
+            self.putChild("change_hook", resource_obj)
 
         # Set default feeds
         if provide_feeds is None:
@@ -350,6 +387,24 @@ class WebStatus(service.MultiService):
 
         self.jinja_loaders = jinja_loaders
 
+    def setupProtectedResource(self, resource_obj, checkers):
+        class SimpleRealm(object):
+            """
+            A realm which gives out L{ChangeHookResource} instances for authenticated
+            users.
+            """
+            implements(IRealm)
+
+            def requestAvatar(self, avatarId, mind, *interfaces):
+                if resource.IResource in interfaces:
+                    return (resource.IResource, resource_obj, lambda: None)
+                raise NotImplementedError()
+
+        portal = Portal(SimpleRealm(), checkers)
+        credentialFactory = guard.BasicCredentialFactory('Protected area')
+        wrapper = guard.HTTPAuthSessionWrapper(portal, [credentialFactory])
+        return wrapper
+
     def setupUsualPages(self, numbuilds, num_events, num_events_max):
         #self.putChild("", IndexOrWaterfallRedirection())
         self.putChild("waterfall", WaterfallStatusResource(num_events=num_events,
@@ -358,7 +413,7 @@ class WebStatus(service.MultiService):
         self.putChild("console", ConsoleStatusResource(
                 orderByTime=self.orderConsoleByTime))
         self.putChild("tgrid", TransposedGridStatusResource())
-        self.putChild("builders", BuildersResource()) # has builds/steps/logs
+        self.putChild("builders", BuildersResource(numbuilds=numbuilds)) # has builds/steps/logs
         self.putChild("one_box_per_builder", Redirect("builders"))
         self.putChild("changes", ChangesResource())
         self.putChild("buildslaves", BuildSlavesResource())
@@ -439,11 +494,11 @@ class WebStatus(service.MultiService):
         self.site.buildbot_service = self
 
         if self.http_port is not None:
-            s = strports.service(self.http_port, self.site)
+            self.http_svc = s = strports.service(self.http_port, self.site)
             s.setServiceParent(self)
         if self.distrib_port is not None:
             f = pb.PBServerFactory(distrib.ResourcePublisher(self.site))
-            s = strports.service(self.distrib_port, f)
+            self.distrib_svc = s = strports.service(self.distrib_port, f)
             s.setServiceParent(self)
 
         self.setupSite()
@@ -490,6 +545,7 @@ class WebStatus(service.MultiService):
     def registerChannel(self, channel):
         self.channels[channel] = 1 # weakrefs
 
+    @defer.inlineCallbacks
     def stopService(self):
         for channel in self.channels:
             try:
@@ -498,7 +554,16 @@ class WebStatus(service.MultiService):
                 log.msg("WebStatus.stopService: error while disconnecting"
                         " leftover clients")
                 log.err()
-        return service.MultiService.stopService(self)
+        yield service.MultiService.stopService(self)
+
+        # having shut them down, now remove our child services so they don't
+        # start up again if we're re-started
+        if self.http_svc:
+            yield self.http_svc.disownServiceParent()
+            self.http_svc = None
+        if self.distrib_svc:
+            yield self.distrib_svc.disownServiceParent()
+            self.distrib_svc = None
 
     def getStatus(self):
         return self.master.getStatus()
@@ -519,7 +584,7 @@ class WebStatus(service.MultiService):
     # This is in preparation for removal of the IControl hierarchy
     # entirely.
 
-    def checkConfig(self, otherStatusReceivers, errors):
+    def checkConfig(self, otherStatusReceivers):
         duplicate_webstatus=0
         for osr in otherStatusReceivers:
             if isinstance(osr,WebStatus):
@@ -533,7 +598,7 @@ class WebStatus(service.MultiService):
                         duplicate_webstatus += 1
 
         if duplicate_webstatus:
-            errors.addError(
+            config.error(
                 "%d Webstatus objects have same port: %s"
                     % (duplicate_webstatus, self.http_port),
             )

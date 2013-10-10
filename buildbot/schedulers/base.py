@@ -13,7 +13,6 @@
 #
 # Copyright Buildbot Team Members
 
-import logging
 from zope.interface import implements
 from twisted.python import failure, log
 from twisted.application import service
@@ -174,9 +173,9 @@ class BaseScheduler(service.MultiService, ComparableMixin, StateMixin):
             if change_filter and not change_filter.filter_change(change):
                 return
             if change.codebase not in self.codebases:
-                log.msg('change contains codebase %s that is not processed by'
-                    ' scheduler %s' % (change.codebase, self.name),
-                    logLevel=logging.DEBUG)
+                log.msg(format='change contains codebase %(codebase)s that is'
+                    'not processed by scheduler %(scheduler)s',
+                    codebase=change.codebase, name=self.name)
                 return
             if fileIsImportant:
                 try:
@@ -192,11 +191,7 @@ class BaseScheduler(service.MultiService, ComparableMixin, StateMixin):
 
             # use change_consumption_lock to ensure the service does not stop
             # while this change is being processed
-            d = self._change_consumption_lock.acquire()
-            d.addCallback(lambda _ : self.gotChange(change, important))
-            def release(x):
-                self._change_consumption_lock.release()
-            d.addBoth(release)
+            d = self._change_consumption_lock.run(self.gotChange, change, important)
             d.addErrback(log.err, 'while processing change')
         self._change_subscription = self.master.subscribeToChanges(changeCallback)
 
@@ -207,14 +202,11 @@ class BaseScheduler(service.MultiService, ComparableMixin, StateMixin):
 
         # acquire the lock change consumption lock to ensure that any change
         # consumption is complete before we are done stopping consumption
-        d = self._change_consumption_lock.acquire()
-        def stop(x):
+        def stop():
             if self._change_subscription:
                 self._change_subscription.unsubscribe()
                 self._change_subscription = None
-            self._change_consumption_lock.release()
-        d.addBoth(stop)
-        return d
+        return self._change_consumption_lock.run(stop)
 
     def gotChange(self, change, important):
         """
@@ -344,7 +336,7 @@ class BaseScheduler(service.MultiService, ComparableMixin, StateMixin):
             # add sourcestamp to the new setid
             yield self.master.db.sourcestamps.addSourceStamp(
                         codebase=codebase,
-                        repository=ss.get('repository', None),
+                        repository=ss.get('repository', ''),
                         branch=ss.get('branch', None),
                         revision=ss.get('revision', None),
                         project=ss.get('project', ''),

@@ -17,8 +17,9 @@
 from twisted.python import log
 from buildbot.process.buildstep import LoggingBuildStep
 from buildbot.status.builder import SKIPPED, FAILURE
+from buildbot.steps.slave import CompositeStepMixin
 
-class Source(LoggingBuildStep):
+class Source(LoggingBuildStep, CompositeStepMixin):
     """This is a base class to generate a source tree in the buildslave.
     Each version control system has a specialized subclass, and is expected
     to override __init__ and implement computeSourceRevision() and
@@ -135,7 +136,7 @@ class Source(LoggingBuildStep):
 
     def updateSourceProperty(self, name, value, source=''):
         """
-        Update a property, indexing the proeprty by codebase if codebase is not
+        Update a property, indexing the property by codebase if codebase is not
         ''.  Source steps should generally use this instead of setProperty.
         """
         # pick a decent source name

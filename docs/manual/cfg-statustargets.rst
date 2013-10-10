@@ -269,7 +269,7 @@ be used to access them.
 
     The console view is still in development. At this moment by
     default the view sorts revisions lexically, which can lead to odd
-    behavior with non-integer revisions (e.g., git), or with integer
+    behavior with non-integer revisions (e.g., Git), or with integer
     revisions of different length (e.g., 999 and 1000). It also has
     some issues with displaying multiple branches at the same time. If
     you do have multiple branches, you should use the ``branch=``
@@ -442,6 +442,9 @@ authentication.  The actions are:
 
 ``gracefulShutdown``
     gracefully shut down a slave when it is finished with its current build
+
+``pauseSlave``
+    temporarily stop running new builds on a slave
 
 ``stopBuild``
     stop a running build
@@ -702,7 +705,7 @@ submission of an arbitrary change request. Run :command:`post_build_request.py
 --help` for more information.  The ``base`` dialect must be enabled for this to
 work.
 
-github hook
+GitHub hook
 ###########
 
 The GitHub hook is simple and takes no options. ::
@@ -723,10 +726,24 @@ useful in cases where you cannot expose the WebStatus for public consumption.
 
 .. warning::
 
-    The incoming HTTP requests for this hook are not authenticated in
-    any way.  Anyone who can access the web status can "fake" a request from
-    GitHub, potentially causing the buildmaster to run arbitrary code.  See
-    :bb:bug:`2186` for work to fix this problem.
+    The incoming HTTP requests for this hook are not authenticated by default.
+    Anyone who can access the web status can "fake" a request from
+    GitHub, potentially causing the buildmaster to run arbitrary code.
+
+To protect URL against unauthorized access you should use ``change_hook_auth`` option ::
+
+    c['status'].append(html.WebStatus(..
+                                      change_hook_auth=["file:changehook.passwd"]))
+
+And create a file ``changehook.passwd`` ::
+
+    user:password
+
+Then, create a GitHub service hook (see https://help.github.com/articles/post-receive-hooks) with a WebHook URL like ``http://user:password@builds.mycompany.com/bbot/change_hook/github``.
+
+See the `documentation <https://twistedmatrix.com/documents/current/core/howto/cred.html>`_ for twisted cred for more option to pass to ``change_hook_auth``.
+
+Note that not using ``change_hook_auth`` can expose you to security risks.
 
 Google Code hook
 ################
@@ -1129,6 +1146,20 @@ MailNotifier arguments
     (dictionary) A dictionary containing key/value pairs of extra headers to add
     to sent e-mails. Both the keys and the values may be a `Interpolate` instance.
 
+``previousBuildGetter``
+    An optional function to calculate the previous build to the one at hand. A
+    :func:`previousBuildGetter` takes a :class:`BuildStatus` and returns a
+    :class:`BuildStatus`. This function is useful when builders don't process
+    their requests in order of arrival (chronologically) and therefore the order
+    of completion of builds does not reflect the order in which changes (and
+    their respective requests) arrived into the system. In such scenarios,
+    status transitions in the chronological sequence of builds within a builder
+    might not reflect the actual status transition in the topological sequence
+    of changes in the tree. What's more, the latest build (the build at hand)
+    might not always be for the most recent request so it might not make sense
+    to send a "change" or "problem" email about it. Returning None from this
+    function will prevent such emails from going out.
+
 As a help to those writing :func:`messageFormatter` functions, the following
 table describes how to get some useful pieces of information from the various
 status objects:
@@ -1136,8 +1167,8 @@ status objects:
 Name of the builder that generated this event
     ``name``
 
-Name of the project
-    :meth:`master_status.getProjectName()`
+Title of the buildmaster
+    :meth:`master_status.getTitle()`
 
 MailNotifier mode
     ``mode`` (a combination of ``change``, ``failing``, ``passing``, ``problem``, ``warnings``,
@@ -1318,6 +1349,22 @@ Some of the commands currently available:
 :samp:`help {COMMAND}`
     Describe a command. Use :command:`help commands` to get a list of known
     commands.
+
+:samp:`shutdown {ARG}`
+    Control the shutdown process of the buildbot master.
+    Available arguments are:
+
+    ``check``
+        Check if the buildbot master is running or shutting down
+
+    ``start``
+        Start clean shutdown
+
+    ``stop``
+        Stop clean shutdown
+
+    ``now``
+        Shutdown immediately without waiting for the builders to finish
     
 ``source``
     Announce the URL of the Buildbot's home page.
@@ -1462,14 +1509,28 @@ GerritStatusPush
         # message, verified, reviewed
         return message, (result == SUCCESS or -1), 0
 
+    def gerritStartCB(builderName, build, arg):
+        message = "Buildbot started compiling your patchset\n"
+        message += "on configuration: %s\n" % builderName
+
+        if arg:
+            message += "\nFor more details visit:\n"
+            message += status.getURLForThing(build) + "\n"
+
+        return message
+
     c['buildbotURL'] = 'http://buildbot.example.com/'
     c['status'].append(GerritStatusPush('127.0.0.1', 'buildbot',
                                         reviewCB=gerritReviewCB,
-                                        reviewArg=c['buildbotURL']))
+                                        reviewArg=c['buildbotURL'],
+                                        startCB=gerritStartCB,
+                                        startArg=c['buildbotURL']))
 
-GerritStatusPush sends review of the :class:`Change` back to the Gerrit server.
+GerritStatusPush sends review of the :class:`Change` back to the Gerrit server,
+optionally also sending a message when a build is started.
 ``reviewCB`` should return a tuple of message, verified, reviewed. If message
 is ``None``, no review will be sent.
+``startCB`` should return a message.
 
 .. [#] Apparently this is the same way http://buildd.debian.org displays build status
 

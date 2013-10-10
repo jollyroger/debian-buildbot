@@ -35,6 +35,8 @@ class BaseBasicScheduler(base.BaseScheduler):
 
     _reactor = reactor # for tests
 
+    fileIsImportant = None
+
     class NotSet: pass
     def __init__(self, name, shouldntBeSet=NotSet, treeStableTimer=None,
                 builderNames=None, branch=NotABranch, branches=NotABranch,
@@ -51,7 +53,8 @@ class BaseBasicScheduler(base.BaseScheduler):
         base.BaseScheduler.__init__(self, name, builderNames, properties, **kwargs)
 
         self.treeStableTimer = treeStableTimer
-        self.fileIsImportant = fileIsImportant
+        if fileIsImportant is not None:
+            self.fileIsImportant = fileIsImportant
         self.onlyImportant = onlyImportant
         self.change_filter = self.getChangeFilter(branch=branch,
                 branches=branches, change_filter=change_filter,
@@ -240,12 +243,14 @@ class AnyBranchScheduler(BaseBasicScheduler):
                 categories=categories)
 
     def getTimerNameForChange(self, change):
-        return change.branch
+        # Py2.6+: could be a namedtuple
+        return (change.codebase, change.project, change.repository, change.branch)
 
     def getChangeClassificationsForTimer(self, objectid, timer_name):
-        branch = timer_name # set in getTimerNameForChange
+        codebase, project, repository, branch = timer_name # set in getTimerNameForChange
         return self.master.db.schedulers.getChangeClassifications(
-                self.objectid, branch=branch)
+                self.objectid, branch=branch, repository=repository,
+                codebase=codebase, project=project)
 
 # now at buildbot.schedulers.dependent, but keep the old name alive
 Dependent = dependent.Dependent

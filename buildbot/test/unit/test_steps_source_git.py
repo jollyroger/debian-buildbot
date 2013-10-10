@@ -14,12 +14,13 @@
 # Copyright Buildbot Team Members
 
 from twisted.trial import unittest
+from twisted.python.reflect import namedModule
 from buildbot.steps.source import git
 from buildbot.status.results import SUCCESS, FAILURE
-from buildbot.test.util import sourcesteps
+from buildbot.test.util import config, sourcesteps
 from buildbot.test.fake.remotecommand import ExpectShell, Expect
 
-class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
+class TestGit(sourcesteps.SourceStepMixin, config.ConfigErrorsMixin, unittest.TestCase):
 
     def setUp(self):
         return self.setUpSourceStep()
@@ -36,6 +37,39 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', '--version'])
             + 0,
             Expect('stat', dict(file='wkdir/.git',
+                                logEnviron=True))
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=['git', 'clean', '-f', '-d'])
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=['git', 'fetch', '-t',
+                                 'http://github.com/buildbot/buildbot.git',
+                                 'HEAD'])
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=['git', 'reset', '--hard', 'FETCH_HEAD', '--'])
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=['git', 'rev-parse', 'HEAD'])
+            + ExpectShell.log('stdio',
+                stdout='f6ad368298bd941e934a41f3babc827b2aa95a1d')
+            + 0,
+        )
+        self.expectOutcome(result=SUCCESS, status_text=["update"])
+        self.expectProperty('got_revision', 'f6ad368298bd941e934a41f3babc827b2aa95a1d', 'Git')
+        return self.runStep()
+
+    def test_mode_full_clean_win32path(self):
+        self.setupStep(
+                git.Git(repourl='http://github.com/buildbot/buildbot.git',
+                                    mode='full', method='clean'))
+        self.build.path_module = namedModule('ntpath')
+        self.expectCommands(
+            ExpectShell(workdir='wkdir',
+                        command=['git', '--version'])
+            + 0,
+            Expect('stat', dict(file=r'wkdir\.git',
                                 logEnviron=True))
             + 0,
             ExpectShell(workdir='wkdir',
@@ -292,7 +326,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', '--version'])
             + 0,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True))
+                                 logEnviron=True,
+                                 timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone',
@@ -319,7 +354,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', '--version'])
             + 0,
             Expect('rmdir', dict(dir='wkdir',
-                                       logEnviron=True))
+                                       logEnviron=True,
+                                       timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone',
@@ -510,10 +546,39 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', '--version'])
             + 0,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True))
+                                 logEnviron=True,
+                                 timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone', '--depth', '1',
+                                 'http://github.com/buildbot/buildbot.git',
+                                 '.'])
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=['git', 'rev-parse', 'HEAD'])
+            + ExpectShell.log('stdio',
+                stdout='f6ad368298bd941e934a41f3babc827b2aa95a1d')
+            + 0,
+        )
+        self.expectOutcome(result=SUCCESS, status_text=["update"])
+        self.expectProperty('got_revision', 'f6ad368298bd941e934a41f3babc827b2aa95a1d', 'Git')
+        return self.runStep()
+
+    def test_mode_full_clobber_no_shallow(self):
+        self.setupStep(
+                git.Git(repourl='http://github.com/buildbot/buildbot.git',
+                        mode='full', method='clobber'))
+
+        self.expectCommands(
+            ExpectShell(workdir='wkdir',
+                        command=['git', '--version'])
+            + 0,
+            Expect('rmdir', dict(dir='wkdir',
+                                 logEnviron=True,
+                                 timeout=1200))
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=['git', 'clone',
                                  'http://github.com/buildbot/buildbot.git',
                                  '.'])
             + 0,
@@ -627,7 +692,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', 'reset', '--hard', 'FETCH_HEAD', '--'])
             + 1,
             Expect('rmdir', dict(dir='wkdir',
-                                       logEnviron=True))
+                                       logEnviron=True,
+                                       timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone',
@@ -665,7 +731,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', 'reset', '--hard', 'FETCH_HEAD', '--'])
             + 1,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True))
+                                 logEnviron=True,
+                                 timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone',
@@ -686,14 +753,15 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
     def test_mode_full_copy(self):
         self.setupStep(
                 git.Git(repourl='http://github.com/buildbot/buildbot.git',
-                        mode='full', method='copy', shallow=True))
+                        mode='full', method='copy'))
 
         self.expectCommands(
             ExpectShell(workdir='wkdir',
                         command=['git', '--version'])
             + 0,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True)),
+                                 logEnviron=True,
+                                 timeout=1200)),
             Expect('stat', dict(file='source/.git',
                                 logEnviron=True))
             + 0,
@@ -706,7 +774,7 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', 'reset', '--hard', 'FETCH_HEAD', '--'])
             + 0,
             Expect('cpdir', {'fromdir': 'source', 'todir': 'build',
-                             'logEnviron': True})
+                             'logEnviron': True, 'timeout': 1200})
             + 0,
             ExpectShell(workdir='build',
                         command=['git', 'rev-parse', 'HEAD'])
@@ -718,6 +786,10 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
         self.expectProperty('got_revision', 'f6ad368298bd941e934a41f3babc827b2aa95a1d', 'Git')
         return self.runStep()
 
+    def test_mode_full_copy_shallow(self):
+        self.assertRaisesConfigError("shallow only possible with mode 'full' and method 'clobber'", lambda :
+                git.Git(repourl='http://github.com/buildbot/buildbot.git',
+                        mode='full', method='copy', shallow=True))
 
     def test_mode_incremental_no_existing_repo(self):
         self.setupStep(
@@ -756,7 +828,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', '--version'])
             + 0,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True))
+                                 logEnviron=True,
+                                 timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone',
@@ -787,7 +860,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', '--version'])
             + 0,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True))
+                                 logEnviron=True,
+                                 timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone',
@@ -817,7 +891,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', '--version'])
             + 0,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True))
+                                 logEnviron=True,
+                                 timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone',
@@ -838,7 +913,7 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
         return self.runStep()
 
     def test_repourl(self):
-        self.assertRaises(AssertionError, lambda :
+        self.assertRaisesConfigError("must provide repourl", lambda :
                 git.Git(mode="full"))
 
     def test_mode_full_fresh_revision(self):
@@ -889,7 +964,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                                  'http://github.com/buildbot/buildbot.git', '.'])
             + 1,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True))
+                                 logEnviron=True,
+                                 timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone', 
@@ -1119,7 +1195,8 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                         command=['git', '--version'])
             + 0,
             Expect('rmdir', dict(dir='wkdir',
-                                 logEnviron=True))
+                                 logEnviron=True,
+                                 timeout=1200))
             + 0,
             ExpectShell(workdir='wkdir',
                         command=['git', 'clone',
@@ -1341,4 +1418,40 @@ class TestGit(sourcesteps.SourceStepMixin, unittest.TestCase):
                            '--abbrev=6'],
             codebase='baz'
         )
+        return self.runStep()
+
+    def test_config_option(self):
+        name = 'url.http://github.com.insteadOf'
+        value = 'blahblah'
+        self.setupStep(
+                git.Git(repourl='%s/buildbot/buildbot.git' % (value,),
+                                    mode='full', method='clean',
+                                    config={name: value}))
+        prefix = ['git', '-c', '%s=%s' % (name, value)]
+        self.expectCommands(
+            ExpectShell(workdir='wkdir',
+                        command=prefix + ['--version'])
+            + 0,
+            Expect('stat', dict(file='wkdir/.git',
+                                logEnviron=True))
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=prefix + ['clean', '-f', '-d'])
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=prefix + ['fetch', '-t',
+                                 '%s/buildbot/buildbot.git' % (value,),
+                                 'HEAD'])
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=prefix + ['reset', '--hard',
+                                 'FETCH_HEAD', '--'])
+            + 0,
+            ExpectShell(workdir='wkdir',
+                        command=prefix + ['rev-parse', 'HEAD'])
+            + ExpectShell.log('stdio',
+                stdout='f6ad368298bd941e934a41f3babc827b2aa95a1d')
+            + 0,
+        )
+        self.expectOutcome(result=SUCCESS, status_text=["update"])
         return self.runStep()

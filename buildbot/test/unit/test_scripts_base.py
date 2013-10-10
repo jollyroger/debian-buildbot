@@ -18,6 +18,7 @@ from __future__ import with_statement
 import os
 import string
 import cStringIO
+import textwrap
 from twisted.trial import unittest
 from buildbot.scripts import base
 from buildbot.test.util import dirs, misc
@@ -32,23 +33,103 @@ class TestIBD(dirs.DirsMixin, misc.StdoutAssertionsMixin, unittest.TestCase):
 
     def test_isBuildmasterDir_no_dir(self):
         self.assertFalse(base.isBuildmasterDir(os.path.abspath('test/nosuch')))
-        self.assertInStdout('no buildbot.tac')
+        self.assertInStdout('error reading')
+        self.assertInStdout('invalid buildmaster directory')
 
     def test_isBuildmasterDir_no_file(self):
         self.assertFalse(base.isBuildmasterDir(os.path.abspath('test')))
-        self.assertInStdout('no buildbot.tac')
+        self.assertInStdout('error reading')
+        self.assertInStdout('invalid buildmaster directory')
 
     def test_isBuildmasterDir_no_Application(self):
         with open(os.path.join('test', 'buildbot.tac'), 'w') as f:
             f.write("foo\nx = Application('buildslave')\nbar")
         self.assertFalse(base.isBuildmasterDir(os.path.abspath('test')))
-        self.assertWasQuiet()
+        self.assertInStdout('unexpected content')
+        self.assertInStdout('invalid buildmaster directory')
 
     def test_isBuildmasterDir_matches(self):
         with open(os.path.join('test', 'buildbot.tac'), 'w') as f:
             f.write("foo\nx = Application('buildmaster')\nbar")
         self.assertTrue(base.isBuildmasterDir(os.path.abspath('test')))
         self.assertWasQuiet()
+
+class TestTacFallback(dirs.DirsMixin, unittest.TestCase):
+    """
+    Tests for L{base.getConfigFileFromTac}.
+    """
+
+    def setUp(self):
+        """
+        Create a base directory.
+        """
+        self.basedir = os.path.abspath('basedir')
+        return self.setUpDirs('basedir')
+
+    def _createBuildbotTac(self, contents=None):
+        """
+        Create a C{buildbot.tac} that points to a given C{configfile}
+        and create that file.
+
+        @param configfile: Config file to point at and create.
+        @type configfile: L{str}
+        """
+        if contents is None:
+            contents = '#dummy'
+        tacfile = os.path.join(self.basedir, "buildbot.tac")
+        with open(tacfile, "wt") as f:
+            f.write(contents)
+        return tacfile
+
+
+    def test_getConfigFileFromTac(self):
+        """
+        When L{getConfigFileFromTac} is passed a C{basedir}
+        containing a C{buildbot.tac}, it reads the location
+        of the config file from there.
+        """
+        self._createBuildbotTac("configfile='other.cfg'")
+        foundConfigFile = base.getConfigFileFromTac(
+                basedir=self.basedir)
+        self.assertEqual(foundConfigFile, "other.cfg")
+
+    def test_getConfigFileFromTac_fallback(self):
+        """
+        When L{getConfigFileFromTac} is passed a C{basedir}
+        which doesn't contain a C{buildbot.tac},
+        it returns C{master.cfg}
+        """
+        foundConfigFile = base.getConfigFileFromTac(
+                basedir=self.basedir)
+        self.assertEqual(foundConfigFile, 'master.cfg')
+
+
+    def test_getConfigFileFromTac_tacWithoutConfigFile(self):
+        """
+        When L{getConfigFileFromTac} is passed a C{basedir}
+        containing a C{buildbot.tac}, but C{buildbot.tac} doesn't
+        define C{configfile}, L{getConfigFileFromTac} returns C{master.cfg}
+        """
+        self._createBuildbotTac()
+        foundConfigFile = base.getConfigFileFromTac(
+                basedir=self.basedir)
+        self.assertEqual(foundConfigFile, 'master.cfg')
+
+
+    def test_getConfigFileFromTac_usingFile(self):
+        """
+        Wehn L{getConfigFileFromTac} is passed a C{basedir}
+        containing a C{buildbot.tac} which references C{__file__},
+        that reference points to C{buildbot.tac}.
+        """
+        self._createBuildbotTac(textwrap.dedent("""
+            from twisted.python.util import sibpath
+            configfile = sibpath(__file__, "relative.cfg")
+            """))
+        foundConfigFile = base.getConfigFileFromTac(basedir=self.basedir)
+        self.assertEqual(foundConfigFile, os.path.join(self.basedir, "relative.cfg"))
+
+
 
 class TestSubcommandOptions(unittest.TestCase):
 
