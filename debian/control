@@ -20,6 +20,8 @@ Build-Depends: debhelper (>= 7.0.50~),
 Homepage: http://buildbot.net
 Standards-Version: 3.9.4.0
 X-Python-Version: >= 2.5
+Vcs-Browser: https://github.com/buildbot/debian-buildbot
+Vcs-Git: git://github.com/buildbot/debian-buildbot.git
 
 Package: buildbot
 Architecture: all
