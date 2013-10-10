@@ -1,3 +1,12 @@
+buildbot (0.8.8-1) unstable; urgency=low
+
+  * New upstream release
+  * Remove text-client.patch (applied upstream)
+  * Add bash-completion. Thanks to Elmir Jagudin
+  * debian/control: add Vcs-* fields
+
+ -- Andriy Senkovych <jolly_roger@itblog.org.ua>  Thu, 10 Oct 2013 13:22:47 +0300
+
 buildbot (0.8.7p1-2) unstable; urgency=low
 
   * Rebuild to update dependency on pyhton-sqlmigrate (Closes: #715471).
