@@ -15,7 +15,8 @@ Build-Depends: debhelper (>= 7.0.50~),
  python-twisted-mail,
  python-twisted-words,
  python-dateutil (>= 1.5),
- libaprutil1
+ libaprutil1,
+ bash-completion
 Homepage: http://buildbot.net
 Standards-Version: 3.9.4.0
 X-Python-Version: >= 2.5
