@@ -1,2 +1,3 @@
+text-client.patch
 fix-interpreters.patch
 fix-init-scripts.patch

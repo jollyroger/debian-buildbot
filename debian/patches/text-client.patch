@@ -1,0 +1,20 @@
+Description: fix TextClient module path
+Origin: upstream, https://github.com/buildbot/buildbot/commit/e88030484e91e569741a4efc727a383cabc865a9
+Bug: http://trac.buildbot.net/ticket/2484
+Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=716650
+Last-Update: 2013-08-06
+
+diff --git a/buildbot/clients/gtkPanes.py b/buildbot/clients/gtkPanes.py
+index 5a22017..d79bb0f 100644
+--- a/buildbot/clients/gtkPanes.py
++++ b/buildbot/clients/gtkPanes.py
+@@ -27,7 +27,8 @@ assert(gtk.Window) # in gtk1 it's gtk.GtkWindow
+ from twisted.spread import pb
+ 
+ #from buildbot.clients.base import Builder, Client
+-from buildbot.clients.base import TextClient, StatusClient
++from buildbot.clients.base import StatusClient
++from buildbot.clients.text import TextClient
+ from buildbot.util import now
+ 
+ from buildbot.status.results import SUCCESS, WARNINGS, FAILURE, EXCEPTION
