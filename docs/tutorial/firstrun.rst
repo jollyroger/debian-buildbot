@@ -32,13 +32,13 @@ systems.  (The preferred method would be to install buildbot from packages
 of your distribution.)
 
 To make this work, you will need the following installed:
- * python_ and the development packages for it
+ * Python_ and the development packages for it
  * virtualenv_
- * git_
+ * Git_
 
-.. _python: http://www.python.org/
+.. _Python: http://www.python.org/
 .. _virtualenv: http://pypi.python.org/pypi/virtualenv/
-.. _git: http://git-scm.com/
+.. _Git: http://git-scm.com/
 
 Preferably, use your package installer to install these.
 
@@ -57,7 +57,12 @@ Let's dive in by typing at the terminal::
   cd tmp/buildbot
   virtualenv --no-site-packages sandbox
   source sandbox/bin/activate
+  easy_install sqlalchemy==0.7.10
   easy_install buildbot
+
+.. note::
+
+    The requirement to install SQLAlchemy-0.7.10 is due to a conflict between newer versions of SQLAlchemy and SQLAlchemy-Migrate.
 
 Creating a master
 -----------------

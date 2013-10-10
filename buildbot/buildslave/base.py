@@ -18,7 +18,7 @@ import time
 from email.Message import Message
 from email.Utils import formatdate
 from zope.interface import implements
-from twisted.python import log, failure
+from twisted.python import log
 from twisted.internet import defer, reactor
 from twisted.application import service
 from twisted.spread import pb
@@ -29,8 +29,8 @@ from buildbot.status.mail import MailNotifier
 from buildbot.process import metrics, botmaster
 from buildbot.interfaces import IBuildSlave, ILatentBuildSlave
 from buildbot.process.properties import Properties
-from buildbot.locks import LockAccess
 from buildbot.util import subscription
+from buildbot.util.eventual import eventually
 from buildbot import config
 
 class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
@@ -123,12 +123,8 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
             s.unsubscribe()
 
         # convert locks into their real form
-        locks = []
-        for access in self.access:
-            if not isinstance(access, LockAccess):
-                access = access.defaultAccess()
-            lock = self.botmaster.getLockByID(access.lockid)
-            locks.append((lock, access))
+        locks = [ (self.botmaster.getLockFromLockAccess(a), a)
+                    for a in self.access ]
         self.locks = [(l.getLock(self), la) for l, la in locks]
         self.lock_subscriptions = [ l.subscribeToReleases(self._lockReleased)
                                     for l, la in self.locks ]
@@ -187,6 +183,7 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
         self.startMissingTimer()
         return service.MultiService.startService(self)
 
+    @defer.inlineCallbacks
     def reconfigService(self, new_config):
         # Given a new BuildSlave, configure this one identically.  Because
         # BuildSlave objects are remotely referenced, we can't replace them
@@ -200,7 +197,8 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
             self.password != new.password or
             new_config.slavePortnum != self.registered_port):
             if self.registration:
-                self.registration.unregister()
+                yield self.registration.unregister()
+                self.registration = None
             self.password = new.password
             self.registered_port = new_config.slavePortnum
             self.registration = self.master.pbmanager.register(
@@ -229,18 +227,15 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
         # update the attached slave's notion of which builders are attached.
         # This assumes that the relevant builders have already been configured,
         # which is why the reconfig_priority is set low in this class.
-        d = self.updateSlave()
+        yield self.updateSlave()
 
-        # and chain up
-        d.addCallback(lambda _ :
-            config.ReconfigurableServiceMixin.reconfigService(self,
-                                                            new_config))
-
-        return d
+        yield config.ReconfigurableServiceMixin.reconfigService(self,
+                                                            new_config)
 
     def stopService(self):
         if self.registration:
             self.registration.unregister()
+            self.registration = None
         self.stopMissingTimer()
         return service.MultiService.stopService(self)
 
@@ -326,6 +321,8 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
         text += "Sincerely,\n"
         text += " The Buildbot\n"
         text += " %s\n" % status.getTitleURL()
+        text += "\n"
+        text += "%s\n" % status.getURLForThing(self.slave_status)
         subject = "Buildbot: buildslave %s was lost" % self.slavename
         return self._mail_missing_message(subject, text)
 
@@ -420,9 +417,9 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
                 state["slave_commands"] = commands
             def _commands_unavailable(why):
                 # probably an old slave
-                log.msg("BuildSlave._commands_unavailable")
                 if why.check(AttributeError):
                     return
+                log.msg("BuildSlave.getCommands is unavailable - ignoring")
                 log.err(why)
             d1.addCallbacks(_got_commands, _commands_unavailable)
             return d1
@@ -439,8 +436,8 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
             self.slave_basedir = state.get("slave_basedir")
             self.slave_system = state.get("slave_system")
             self.slave = bot
-            if self.slave_system == "win32":
-                self.path_module = namedModule("win32path")
+            if self.slave_system == "nt":
+                self.path_module = namedModule("ntpath")
             else:
                 # most eveything accepts / as separator, so posix should be a
                 # reasonable fallback
@@ -482,7 +479,7 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
             subs = self.detached_subs
             self.detached_subs = None
             subs.deliver()
-        reactor.callLater(0, notif)
+        eventually(notif)
 
     def subscribeToDetach(self, callback):
         """
@@ -528,7 +525,7 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
         # notifyOnDisconnect runs the callback with one argument, the
         # RemoteReference being disconnected.
         def _disconnected(rref):
-            reactor.callLater(0, d.callback, None)
+            eventually(d.callback, None)
         slave.notifyOnDisconnect(_disconnected)
         tport = slave.broker.transport
         # this is the polite way to request that a socket be closed
@@ -596,6 +593,10 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
         L{maybeStartBuildsForSlave} to be called at that time, or builds on
         this slave will not start.
         """
+
+        if self.slave_status.isPaused():
+            return False
+
         # If we're waiting to shutdown gracefully, then we shouldn't
         # accept any new jobs.
         if self.slave_status.getGraceful():
@@ -707,6 +708,18 @@ class AbstractBuildSlave(config.ReconfigurableServiceMixin, pb.Avatar,
             return
         d = self.shutdown()
         d.addErrback(log.err, 'error while shutting down slave')
+
+    def pause(self):
+        """Stop running new builds on the slave."""
+        self.slave_status.setPaused(True)
+
+    def unpause(self):
+        """Restart running new builds on the slave."""
+        self.slave_status.setPaused(False)
+        self.botmaster.maybeStartBuildsForSlave(self.slavename)
+
+    def isPaused(self):
+        return self.paused
 
 class BuildSlave(AbstractBuildSlave):
 
@@ -900,7 +913,7 @@ class AbstractLatentBuildSlave(AbstractBuildSlave):
 
     def _setBuildWaitTimer(self):
         self._clearBuildWaitTimer()
-        if self.build_wait_timeout < 0:
+        if self.build_wait_timeout <= 0:
             return
         self.build_wait_timer = reactor.callLater(
             self.build_wait_timeout, self._soft_disconnect)
@@ -919,11 +932,26 @@ class AbstractLatentBuildSlave(AbstractBuildSlave):
         yield d
         self.insubstantiating = False
 
+    @defer.inlineCallbacks
     def _soft_disconnect(self, fast=False):
-        if not self.build_wait_timeout < 0:
-            return AbstractBuildSlave.disconnect(self)
+        # a negative build_wait_timeout means the slave should never be shut
+        # down, so just disconnect.
+        if self.build_wait_timeout < 0:
+            yield AbstractBuildSlave.disconnect(self)
+            return
 
-        d = AbstractBuildSlave.disconnect(self)
+        if self.missing_timer:
+            self.missing_timer.cancel()
+            self.missing_timer = None
+
+        if self.substantiation_deferred is not None:
+            log.msg("Weird: Got request to stop before started. Allowing "
+                    "slave to start cleanly to avoid inconsistent state")
+            yield self.substantiation_deferred
+            self.substantiation_deferred = None
+            self.substantiation_build = None
+            log.msg("Substantiation complete, immediately terminating.")
+
         if self.slave is not None:
             # this could be called when the slave needs to shut down, such as
             # in BotMaster.removeSlave, *or* when a new slave requests a
@@ -934,28 +962,19 @@ class AbstractLatentBuildSlave(AbstractBuildSlave):
             # here, we just do what should be appropriate for the first case,
             # and put our heads in the sand for the second, at least for now.
             # The best solution to the odd situation is removing it as a
-            # possibilty: make the master in charge of connecting to the
+            # possibility: make the master in charge of connecting to the
             # slave, rather than vice versa. TODO.
-            d = defer.DeferredList([d, self.insubstantiate(fast)])
+            yield defer.DeferredList([
+                AbstractBuildSlave.disconnect(self),
+                self.insubstantiate(fast)
+                ], consumeErrors=True, fireOnOneErrback=True)
         else:
-            if self.substantiation_deferred is not None:
-                # unlike the previous block, we don't expect this situation when
-                # ``attached`` calls ``disconnect``, only when we get a simple
-                # request to "go away".
-                d = self.substantiation_deferred
-                self.substantiation_deferred = None
-                self.substantiation_build = None
-                d.errback(failure.Failure(
-                    RuntimeError("soft disconnect aborted substantiation")))
-                if self.missing_timer:
-                    self.missing_timer.cancel()
-                    self.missing_timer = None
-                self.stop_instance()
-        return d
+            yield AbstractBuildSlave.disconnect(self)
+            yield self.stop_instance(fast)
 
     def disconnect(self):
         # This returns a Deferred but we don't use it
-        self._soft_disconnect() 
+        self._soft_disconnect()
         # this removes the slave from all builders.  It won't come back
         # without a restart (or maybe a sighup)
         self.botmaster.slaveLost(self)

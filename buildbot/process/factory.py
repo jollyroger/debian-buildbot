@@ -13,23 +13,22 @@
 #
 # Copyright Buildbot Team Members
 
+import warnings
+from twisted.python import deprecate, versions
+
 from buildbot import interfaces, util
 from buildbot.process.build import Build
+from buildbot.process.buildstep import BuildStep
 from buildbot.steps.source import CVS, SVN
 from buildbot.steps.shell import Configure, Compile, Test, PerlModuleTest
 
-class ArgumentsInTheWrongPlace(Exception):
-    """When calling BuildFactory.addStep(stepinstance), addStep() only takes
-    one argument. You passed extra arguments to addStep(), which you probably
-    intended to pass to your BuildStep constructor instead. For example, you
-    should do::
+# deprecated, use BuildFactory.addStep
+@deprecate.deprecated(versions.Version("buildbot", 0, 8, 6))
+def s(steptype, **kwargs):
+    # convenience function for master.cfg files, to create step
+    # specification tuples
+    return interfaces.IBuildStepFactory(steptype(**kwargs))
 
-     f.addStep(ShellCommand(command=['echo','stuff'], haltOnFailure=True))
-
-    instead of::
-
-     f.addStep(ShellCommand(command=['echo','stuff']), haltOnFailure=True)
-    """
 
 class BuildFactory(util.ComparableMixin):
     """
@@ -58,7 +57,13 @@ class BuildFactory(util.ComparableMixin):
         b.setStepFactories(self.steps)
         return b
 
-    def addStep(self, step):
+    def addStep(self, step, **kwargs):
+        if kwargs or (type(step) == type(BuildStep) and issubclass(step, BuildStep)):
+            warnings.warn(
+                    "Passing a BuildStep subclass to factory.addStep is "
+                    "deprecated. Please pass a BuildStep instance instead.",
+                    DeprecationWarning, stacklevel=2)
+            step = step(**kwargs)
         self.steps.append(interfaces.IBuildStepFactory(step))
 
     def addSteps(self, steps):
@@ -87,25 +92,25 @@ class GNUAutoconf(BuildFactory):
             else:
                 assert isinstance(configure, (list, tuple))
                 command = configure + configureFlags
-            self.addStep(Configure, command=command, env=configureEnv)
+            self.addStep(Configure(command=command, env=configureEnv))
         if compile is not None:
-            self.addStep(Compile, command=compile)
+            self.addStep(Compile(command=compile))
         if test is not None:
-            self.addStep(Test, command=test)
+            self.addStep(Test(command=test))
 
 class CPAN(BuildFactory):
     def __init__(self, source, perl="perl"):
         BuildFactory.__init__(self, [source])
-        self.addStep(Configure, command=[perl, "Makefile.PL"])
-        self.addStep(Compile, command=["make"])
-        self.addStep(PerlModuleTest, command=["make", "test"])
+        self.addStep(Configure(command=[perl, "Makefile.PL"]))
+        self.addStep(Compile(command=["make"]))
+        self.addStep(PerlModuleTest(command=["make", "test"]))
 
 class Distutils(BuildFactory):
     def __init__(self, source, python="python", test=None):
         BuildFactory.__init__(self, [source])
-        self.addStep(Compile, command=[python, "./setup.py", "build"])
+        self.addStep(Compile(command=[python, "./setup.py", "build"]))
         if test is not None:
-            self.addStep(Test, command=test)
+            self.addStep(Test(command=test))
 
 class Trial(BuildFactory):
     """Build a python module that uses distutils and trial. Set 'tests' to
@@ -137,15 +142,15 @@ class Trial(BuildFactory):
 
         from buildbot.steps.python_twisted import Trial
         buildcommand = buildpython + ["./setup.py", "build"]
-        self.addStep(Compile, command=buildcommand, env=env)
-        self.addStep(Trial,
+        self.addStep(Compile(command=buildcommand, env=env))
+        self.addStep(Trial(
                      python=trialpython, trial=self.trial,
                      testpath=testpath,
                      tests=tests, testChanges=useTestCaseNames,
                      randomly=self.randomly,
                      recurse=self.recurse,
                      env=env,
-                     )
+                     ))
 
 
 # compatibility classes, will go away. Note that these only offer

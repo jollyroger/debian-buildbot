@@ -23,6 +23,15 @@ from twisted.internet import defer, reactor
 from twisted.python import log
 from buildbot import config
 from buildbot.changes import filter
+# Import croniter if available.
+# This is only required for Nightly schedulers,
+# so fail gracefully if it isn't present.
+try:
+    from buildbot.util import croniter
+except ImportError:
+    # Pyflakes doesn't like a redefinition here
+    # Instead, we check if croniter is defined when we need it
+    pass
 
 class Timed(base.BaseScheduler):
     """
@@ -79,15 +88,13 @@ class Timed(base.BaseScheduler):
         # shut down any pending actuation, and ensure that we wait for any
         # current actuation to complete by acquiring the lock.  This ensures
         # that no build will be scheduled after stopService is complete.
-        d = self.actuationLock.acquire()
-        def stop_actuating(_):
+        def stop_actuating():
             self.actuateOk = False
             self.actuateAt = None
             if self.actuateAtTimer:
                 self.actuateAtTimer.cancel()
             self.actuateAtTimer = None
-        d.addCallback(stop_actuating)
-        d.addCallback(lambda _ : self.actuationLock.release())
+        d = self.actuationLock.run(stop_actuating)
 
         # and chain to the parent class
         d.addCallback(lambda _ : base.BaseScheduler.stopService(self))
@@ -128,14 +135,7 @@ class Timed(base.BaseScheduler):
 
         @returns: Deferred
         """
-        d = self.actuationLock.acquire()
-        d.addCallback(lambda _ : self._scheduleNextBuild_locked())
-        # always release the lock
-        def release(x):
-            self.actuationLock.release()
-            return x
-        d.addBoth(release)
-        return d
+        return self.actuationLock.run(self._scheduleNextBuild_locked)
 
     ## utilities
 
@@ -172,10 +172,8 @@ class Timed(base.BaseScheduler):
         self.actuateAtTimer = None
         self.lastActuated = self.actuateAt
 
-        d = self.actuationLock.acquire()
-
         @defer.inlineCallbacks
-        def set_state_and_start(_):
+        def set_state_and_start():
             # bail out if we shouldn't be actuating anymore
             if not self.actuateOk:
                 return
@@ -189,12 +187,7 @@ class Timed(base.BaseScheduler):
 
             # schedule the next build (noting the lock is already held)
             yield self._scheduleNextBuild_locked()
-        d.addCallback(set_state_and_start)
-
-        def unlock(x):
-            self.actuationLock.release()
-            return x
-        d.addBoth(unlock)
+        d = self.actuationLock.run(set_state_and_start)
 
         # this function can't return a deferred, so handle any failures via
         # log.err
@@ -240,6 +233,12 @@ class NightlyBase(Timed):
         self.month = month
         self.dayOfWeek = dayOfWeek
 
+        try:
+            croniter
+        except NameError:
+            config.error("python-dateutil required for scheduler %s '%s'." %
+                (self.__class__.__name__, self.name))
+
     def _timeToCron(self, time, isDayOfWeek = False):
         if isinstance(time, int):
             if isDayOfWeek:
@@ -255,9 +254,6 @@ class NightlyBase(Timed):
         return ','.join([ str(s) for s in time ]) # Convert the list to a string
 
     def getNextBuildTime(self, lastActuated):
-        # deferred import in case python-dateutil is not present
-        from buildbot.util import croniter
-
         dateTime = lastActuated or self.now()
         sched =  '%s %s %s %s %s' % (self._timeToCron(self.minute),
                                      self._timeToCron(self.hour),

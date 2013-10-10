@@ -17,6 +17,7 @@ import weakref
 from twisted.internet import defer
 from buildbot.test.fake import fakedb
 from buildbot.test.fake import pbmanager
+from buildbot.test.fake.botmaster import FakeBotMaster
 from buildbot import config
 import mock
 
@@ -43,21 +44,25 @@ class FakeCaches(object):
         return FakeCache(name, miss_fn)
 
 
-class FakeBotMaster(object):
-
-    pass
-
-
 class FakeStatus(object):
 
-    def builderAdded(self, name, basedir, category=None):
+    def builderAdded(self, name, basedir, category=None, description=None):
         return FakeBuilderStatus()
 
 
 class FakeBuilderStatus(object):
 
+    def setDescription(self, description):
+        self._description = description
+
+    def getDescription(self):
+        return self._description
+
     def setCategory(self, category):
-        pass
+        self._category = category
+
+    def getCategory(self):
+        return self._category
 
     def setSlavenames(self, names):
         pass
@@ -83,7 +88,7 @@ class FakeMaster(object):
         self.caches = FakeCaches()
         self.pbmanager = pbmanager.FakePBManager()
         self.basedir = 'basedir'
-        self.botmaster = FakeBotMaster()
+        self.botmaster = FakeBotMaster(master=self)
         self.botmaster.parent = self
         self.status = FakeStatus()
         self.status.master = self

@@ -94,8 +94,8 @@
        <span class="label">{{f.label}}</span>
        <span class="select">
        <select name='{{f.fullName}}' {{ f.multiple and "multiple" or ""}}>
-         {% for c in f.choices %}
-         <option {{(c in default_props[sch.name+"."+f.fullName]) and "selected" or ""}}>{{c}}</option>
+         {% for c in default_props[sch.name+"."+f.fullName+".choices"] %}
+           <option {{(c in default_props[sch.name+"."+f.fullName]) and "selected" or ""}}>{{c}}</option>
          {% endfor %}
        </select>
        </span>
@@ -145,7 +145,7 @@
  </form>
 {% endmacro %}
 {% macro force_build(force_url, authz, request, on_all=False, on_selected=False, builders=[], force_schedulers={},default_props={}) %}
-  {% for name, sch in force_schedulers.items() %}
+  {% for name, sch in force_schedulers.items() | sort %}
     {{ force_build_one_scheduler(force_url, authz, request, on_all, on_selected, builders, sch, default_props=default_props) }}
   {% endfor %}
 
@@ -157,6 +157,25 @@
   <p>To cause this slave to shut down gracefully when it is idle,
     push the 'Graceful Shutdown' button</p>
   <input type="submit" value="Graceful Shutdown" />
+ </form>
+{% endmacro %}
+
+{% macro pause_slave(pause_url, authz, paused) %}
+  <form method="post" action="{{ pause_url }}" class='command pause_slave'>
+
+  {% if paused %}
+    <p>To cause this slave to start running new builds again,
+      push the 'Unpause Slave' button</p>
+  {% else %}
+    <p>To cause this slave to stop running new builds,
+      push the 'Pause Slave' button</p>
+  {% endif %}
+
+  {% if paused %}
+      <input type="submit" value="Unpause Slave" />
+  {% else %}
+      <input type="submit" value="Pause Slave" />
+  {% endif %}
  </form>
 {% endmacro %}
 
@@ -185,23 +204,8 @@
   </form>
 {% endmacro %}
 
-{% macro rebuild_build(rebuild_url, authz, exactly, ss) %}
+{% macro rebuild_build(rebuild_url, authz, ss) %}
  <form method="post" action="{{ rebuild_url }}" class="command rebuild">
-
-    {% if exactly %}
-      <p>This tree was built from a specific set of
-          source files, and can be rebuilt exactly</p>
-    {% else %}
-      <p>This tree was built from the most recent revision
-      {% if ss.branch %}
-        (along branch {{ ss.branch }})
-      {% endif %}
-      and thus it might not be possible to rebuild it
-      exactly. <br/>Any changes that have been committed
-      after this build was started <b>will</b> be
-      included in a rebuild.</p>
-    {% endif %}
-
 
   {% if on_all %}
      <p>To force a build on <strong>all Builders</strong>, fill out the following fields
