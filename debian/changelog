@@ -1,3 +1,11 @@
+buildbot (0.8.8-1.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Rebuild with sqlalchemy 0.9.
+  * Added upstream doc patches to avoid FTBFS (Closes: #737315).
+
+ -- Thomas Goirand <zigo@debian.org>  Mon, 17 Mar 2014 06:22:09 +0000
+
 buildbot (0.8.8-1) unstable; urgency=low
 
   * New upstream release
