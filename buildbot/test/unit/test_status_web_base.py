@@ -14,17 +14,20 @@
 # Copyright Buildbot Team Members
 
 import mock
+
 from buildbot.status.web import base
 from twisted.internet import defer
 from twisted.trial import unittest
 
 from buildbot.test.fake.web import FakeRequest
 
+
 class ActionResource(unittest.TestCase):
 
     def test_ActionResource_success(self):
 
         class MyActionResource(base.ActionResource):
+
             def performAction(self, request):
                 self.got_request = request
                 return defer.succeed('http://buildbot.net')
@@ -45,6 +48,7 @@ class ActionResource(unittest.TestCase):
     def test_ActionResource_exception(self):
 
         class MyActionResource(base.ActionResource):
+
             def performAction(self, request):
                 return defer.fail(RuntimeError('sacrebleu'))
 
@@ -58,6 +62,7 @@ class ActionResource(unittest.TestCase):
             # pass - all good!
         d.addErrback(check)
         return d
+
 
 class Functions(unittest.TestCase):
 
@@ -84,6 +89,63 @@ class Functions(unittest.TestCase):
         return self.do_test_getRequestCharset(
             'application/x-www-form-urlencoded ; charset=UTF-16 ; foo=bar',
             'UTF-16')
+
+    def test_plural_zero(self):
+        self.assertEqual(base.plural("car", "cars", 0), "0 cars")
+
+    def test_plural_one(self):
+        self.assertEqual(base.plural("car", "cars", 1), "1 car")
+
+    def test_plural_many(self):
+        self.assertEqual(base.plural("car", "cars", 34), "34 cars")
+
+    def test_abbreviate_age_0_sec(self):
+        self.assertEqual(base.abbreviate_age(0), "0 seconds ago")
+
+    def test_abbreviate_age_1_sec(self):
+        self.assertEqual(base.abbreviate_age(1), "1 second ago")
+
+    def test_abbreviate_age_5_sec(self):
+        self.assertEqual(base.abbreviate_age(5), "5 seconds ago")
+
+    def test_abbreviate_age_89_sec(self):
+        self.assertEqual(base.abbreviate_age(89), "89 seconds ago")
+
+    def test_abbreviate_age_2_min(self):
+        self.assertEqual(base.abbreviate_age((base.MINUTE * 2) + 2),
+                         "about 2 minutes ago")
+
+    def test_abbreviate_age_10_min(self):
+        self.assertEqual(base.abbreviate_age((base.MINUTE * 10) + 7),
+                         "about 10 minutes ago")
+
+    def test_abbreviate_age_64_min(self):
+        self.assertEqual(base.abbreviate_age((base.HOUR + base.MINUTE * 4)),
+                         "about 64 minutes ago")
+
+    def test_abbreviate_age_2_hours(self):
+        self.assertEqual(base.abbreviate_age((base.HOUR * 2 + 25)),
+                         "about 2 hours ago")
+
+    def test_abbreviate_age_1_day(self):
+        self.assertEqual(base.abbreviate_age((base.DAY + base.MINUTE * 4)),
+                         "about 1 day ago")
+
+    def test_abbreviate_age_3_days(self):
+        self.assertEqual(base.abbreviate_age((base.DAY * 3 + base.MINUTE * 9)),
+                         "about 3 days ago")
+
+    def test_abbreviate_age_12_days(self):
+        self.assertEqual(base.abbreviate_age((base.DAY * 12 + base.HOUR * 9)),
+                         "about 12 days ago")
+
+    def test_abbreviate_age_3_weeks(self):
+        self.assertEqual(base.abbreviate_age((base.WEEK * 3 + base.DAY)),
+                         "about 3 weeks ago")
+
+    def test_abbreviate_age_long_time(self):
+        self.assertEqual(base.abbreviate_age((base.MONTH * 4 + base.WEEK)),
+                         "a long time ago")
 
     def test_path_to_root_from_root(self):
         self.assertEqual(base.path_to_root(self.fakeRequest([])),

@@ -17,20 +17,26 @@ import collections
 import re
 import warnings
 import weakref
-from buildbot import config, util
+
+from buildbot import config
+from buildbot import util
+from buildbot.interfaces import IProperties
+from buildbot.interfaces import IRenderable
+from buildbot.util import flatten
 from buildbot.util import json
-from buildbot.interfaces import IRenderable, IProperties
 from twisted.internet import defer
 from twisted.python.components import registerAdapter
 from zope.interface import implements
 
+
 class Properties(util.ComparableMixin):
+
     """
     I represent a set of properties that can be interpolated into various
     strings in buildsteps.
 
     @ivar properties: dictionary mapping property values to tuples
-        (value, source), where source is a string identifing the source
+        (value, source), where source is a string identifying the source
         of the property.
 
     Objects of this class can be read like a dictionary -- in this case,
@@ -51,8 +57,9 @@ class Properties(util.ComparableMixin):
         # Track keys which are 'runtime', and should not be
         # persisted if a build is rebuilt
         self.runtime = set()
-        self.build = None # will be set by the Build when starting
-        if kwargs: self.update(kwargs, "TEST")
+        self.build = None  # will be set by the Build when starting
+        if kwargs:
+            self.update(kwargs, "TEST")
 
     @classmethod
     def fromDict(cls, propDict):
@@ -87,8 +94,7 @@ class Properties(util.ComparableMixin):
 
     def asList(self):
         """Return the properties as a sorted list of (name, value, source)"""
-        l = [ (k, v[0], v[1]) for k,v in self.properties.iteritems() ]
-        l.sort()
+        l = sorted([(k, v[0], v[1]) for k, v in self.properties.iteritems()])
         return l
 
     def asDict(self):
@@ -97,7 +103,7 @@ class Properties(util.ComparableMixin):
 
     def __repr__(self):
         return ('Properties(**' +
-                repr(dict((k,v[0]) for k,v in self.properties.iteritems())) +
+                repr(dict((k, v[0]) for k, v in self.properties.iteritems())) +
                 ')')
 
     def update(self, dict, source, runtime=False):
@@ -113,7 +119,7 @@ class Properties(util.ComparableMixin):
     def updateFromPropertiesNoRuntime(self, other):
         """Update this object based on another object, but don't
         include properties that were marked as runtime."""
-        for k,v in other.properties.iteritems():
+        for k, v in other.properties.iteritems():
             if k not in other.runtime:
                 self.properties[k] = v
 
@@ -123,7 +129,7 @@ class Properties(util.ComparableMixin):
         return self.properties.get(name, (default,))[0]
 
     def hasProperty(self, name):
-        return self.properties.has_key(name)
+        return name in self.properties
 
     has_key = hasProperty
 
@@ -132,9 +138,9 @@ class Properties(util.ComparableMixin):
             json.dumps(value)
         except TypeError:
             warnings.warn(
-                    "Non jsonable properties are not explicitly supported and" +
-                    "will be explicitly disallowed in a future version.",
-                    DeprecationWarning, stacklevel=2)
+                "Non jsonable properties are not explicitly supported and" +
+                "will be explicitly disallowed in a future version.",
+                DeprecationWarning, stacklevel=2)
 
         self.properties[name] = (value, source)
         if runtime:
@@ -152,6 +158,7 @@ class Properties(util.ComparableMixin):
 
 
 class PropertiesMixin:
+
     """
     A mixin to add L{IProperties} methods to a class which does not implement
     the interface, but which can be coerced to the interface via an adapter.
@@ -191,8 +198,8 @@ class PropertiesMixin:
         return props.render(value)
 
 
-
 class _PropertyMap(object):
+
     """
     Privately-used mapping object to implement WithProperties' substitutions,
     including the rendering of None as ''.
@@ -200,6 +207,7 @@ class _PropertyMap(object):
     colon_minus_re = re.compile(r"(.*):-(.*)")
     colon_tilde_re = re.compile(r"(.*):~(.*)")
     colon_plus_re = re.compile(r"(.*):\+(.*)")
+
     def __init__(self, properties):
         # use weakref here to avoid a reference loop
         self.properties = weakref.ref(properties)
@@ -212,10 +220,10 @@ class _PropertyMap(object):
         def colon_minus(mo):
             # %(prop:-repl)s
             # if prop exists, use it; otherwise, use repl
-            prop, repl = mo.group(1,2)
+            prop, repl = mo.group(1, 2)
             if prop in self.temp_vals:
                 return self.temp_vals[prop]
-            elif properties.has_key(prop):
+            elif prop in properties:
                 return properties[prop]
             else:
                 return repl
@@ -223,10 +231,10 @@ class _PropertyMap(object):
         def colon_tilde(mo):
             # %(prop:~repl)s
             # if prop exists and is true (nonempty), use it; otherwise, use repl
-            prop, repl = mo.group(1,2)
+            prop, repl = mo.group(1, 2)
             if prop in self.temp_vals and self.temp_vals[prop]:
                 return self.temp_vals[prop]
-            elif properties.has_key(prop) and properties[prop]:
+            elif prop in properties and properties[prop]:
                 return properties[prop]
             else:
                 return repl
@@ -234,17 +242,17 @@ class _PropertyMap(object):
         def colon_plus(mo):
             # %(prop:+repl)s
             # if prop exists, use repl; otherwise, an empty string
-            prop, repl = mo.group(1,2)
-            if properties.has_key(prop) or prop in self.temp_vals:
+            prop, repl = mo.group(1, 2)
+            if prop in properties or prop in self.temp_vals:
                 return repl
             else:
                 return ''
 
         for regexp, fn in [
-            ( self.colon_minus_re, colon_minus ),
-            ( self.colon_tilde_re, colon_tilde ),
-            ( self.colon_plus_re, colon_plus ),
-            ]:
+            (self.colon_minus_re, colon_minus),
+            (self.colon_tilde_re, colon_tilde),
+            (self.colon_plus_re, colon_plus),
+        ]:
             mo = regexp.match(key)
             if mo:
                 rv = fn(mo)
@@ -258,14 +266,17 @@ class _PropertyMap(object):
                 rv = properties[key]
 
         # translate 'None' to an empty string
-        if rv is None: rv = ''
+        if rv is None:
+            rv = ''
         return rv
 
     def add_temporary_value(self, key, val):
         'Add a temporary value (to support keyword arguments to WithProperties)'
         self.temp_vals[key] = val
 
+
 class WithProperties(util.ComparableMixin):
+
     """
     This is a marker class, used fairly widely to indicate that we
     want to interpolate build properties.
@@ -293,22 +304,23 @@ class WithProperties(util.ComparableMixin):
                 strings.append(pmap[name])
             s = self.fmtstring % tuple(strings)
         else:
-            for k,v in self.lambda_subs.iteritems():
+            for k, v in self.lambda_subs.iteritems():
                 pmap.add_temporary_value(k, v(build))
             s = self.fmtstring % pmap
         return s
 
 
+_notHasKey = object()  # Marker object for _Lookup(..., hasKey=...) default
 
-_notHasKey = object() ## Marker object for _Lookup(..., hasKey=...) default
+
 class _Lookup(util.ComparableMixin, object):
     implements(IRenderable)
 
     compare_attrs = ('value', 'index', 'default', 'defaultWhenFalse', 'hasKey', 'elideNoneAs')
 
     def __init__(self, value, index, default=None,
-            defaultWhenFalse=True, hasKey=_notHasKey,
-            elideNoneAs=None):
+                 defaultWhenFalse=True, hasKey=_notHasKey,
+                 elideNoneAs=None):
         self.value = value
         self.index = index
         self.default = default
@@ -318,25 +330,24 @@ class _Lookup(util.ComparableMixin, object):
 
     def __repr__(self):
         return '_Lookup(%r, %r%s%s%s%s)' % (
-                self.value,
-                self.index,
-                ', default=%r' % (self.default,)
-                    if self.default is not None else '',
-                ', defaultWhenFalse=False'
-                    if not self.defaultWhenFalse else '',
-                ', hasKey=%r' % (self.hasKey,)
-                    if self.hasKey is not _notHasKey else '',
-                ', elideNoneAs=%r'% (self.elideNoneAs,)
-                    if self.elideNoneAs is not None else '')
-
+            self.value,
+            self.index,
+            ', default=%r' % (self.default,)
+            if self.default is not None else '',
+            ', defaultWhenFalse=False'
+            if not self.defaultWhenFalse else '',
+            ', hasKey=%r' % (self.hasKey,)
+            if self.hasKey is not _notHasKey else '',
+            ', elideNoneAs=%r' % (self.elideNoneAs,)
+            if self.elideNoneAs is not None else '')
 
     @defer.inlineCallbacks
     def getRenderingFor(self, build):
         value = build.render(self.value)
         index = build.render(self.index)
         value, index = yield defer.gatherResults([value, index])
-        if not value.has_key(index):
-           rv = yield build.render(self.default)
+        if not index in value:
+            rv = yield build.render(self.default)
         else:
             if self.defaultWhenFalse:
                 rv = yield build.render(value[index])
@@ -354,7 +365,7 @@ class _Lookup(util.ComparableMixin, object):
 
 
 def _getInterpolationList(fmtstring):
-    # TODO: Verify that no positial substitutions are requested
+    # TODO: Verify that no positional substitutions are requested
     dd = collections.defaultdict(str)
     fmtstring % dd
     return dd.keys()
@@ -362,9 +373,11 @@ def _getInterpolationList(fmtstring):
 
 class _PropertyDict(object):
     implements(IRenderable)
+
     def getRenderingFor(self, build):
         return build.getProperties()
 _thePropertyDict = _PropertyDict()
+
 
 class _SourceStampDict(util.ComparableMixin, object):
     implements(IRenderable)
@@ -373,6 +386,7 @@ class _SourceStampDict(util.ComparableMixin, object):
 
     def __init__(self, codebase):
         self.codebase = codebase
+
     def getRenderingFor(self, build):
         ss = build.getBuild().getSourceStamp(self.codebase)
         if ss:
@@ -380,12 +394,23 @@ class _SourceStampDict(util.ComparableMixin, object):
         else:
             return {}
 
+
+class _SlaveInfoDict(util.ComparableMixin, object):
+    implements(IRenderable)
+
+    def getRenderingFor(self, build):
+        slave = build.getBuild().slavebuilder.slave
+        return slave.slave_status.getInfoAsDict()
+
+
 class _Lazy(util.ComparableMixin, object):
     implements(IRenderable)
 
     compare_attrs = ('value',)
+
     def __init__(self, value):
         self.value = value
+
     def getRenderingFor(self, build):
         return self.value
 
@@ -394,6 +419,7 @@ class _Lazy(util.ComparableMixin, object):
 
 
 class Interpolate(util.ComparableMixin, object):
+
     """
     This is a marker class, used fairly widely to indicate that we
     want to interpolate build properties.
@@ -402,7 +428,7 @@ class Interpolate(util.ComparableMixin, object):
     implements(IRenderable)
     compare_attrs = ('fmtstring', 'args', 'kwargs')
 
-    identifier_re = re.compile('^[\w-]*$')
+    identifier_re = re.compile(r'^[\w-]*$')
 
     def __init__(self, fmtstring, *args, **kwargs):
         self.fmtstring = fmtstring
@@ -437,12 +463,12 @@ class Interpolate(util.ComparableMixin, object):
 
     @staticmethod
     def _parse_src(arg):
-        ## TODO: Handle changes
+        # TODO: Handle changes
         try:
             codebase, attr, repl = arg.split(":", 2)
         except ValueError:
             try:
-                codebase, attr = arg.split(":",1)
+                codebase, attr = arg.split(":", 1)
                 repl = None
             except ValueError:
                 config.error("Must specify both codebase and attribute for src Interpolation '%s'" % arg)
@@ -455,6 +481,17 @@ class Interpolate(util.ComparableMixin, object):
             config.error("Attribute must be alphanumeric for src Interpolation '%s'" % arg)
             codebase = attr = repl = None
         return _SourceStampDict(codebase), attr, repl
+
+    @staticmethod
+    def _parse_slave(arg):
+        try:
+            key, repl = arg.split(":", 1)
+        except ValueError:
+            key, repl = arg, None
+        if not Interpolate.identifier_re.match(key):
+            config.error("Keyword must be alphanumeric for slave-info Interpolation '%s'" % arg)
+            key = repl = None
+        return _SlaveInfoDict(), key, repl
 
     def _parse_kw(self, arg):
         try:
@@ -491,27 +528,27 @@ class Interpolate(util.ComparableMixin, object):
                 if parenCount < 0:
                     raise ValueError
             if parenCount == 0 and arg[i] == delim:
-                return arg[0:i], arg[i+1:]
+                return arg[0:i], arg[i + 1:]
         return arg
 
     def _parseColon_minus(self, d, kw, repl):
         return _Lookup(d, kw,
-               default=Interpolate(repl, **self.kwargs),
-               defaultWhenFalse=False,
-               elideNoneAs='')
+                       default=Interpolate(repl, **self.kwargs),
+                       defaultWhenFalse=False,
+                       elideNoneAs='')
 
     def _parseColon_tilde(self, d, kw, repl):
         return _Lookup(d, kw,
-               default=Interpolate(repl, **self.kwargs),
-               defaultWhenFalse=True,
-               elideNoneAs='')
+                       default=Interpolate(repl, **self.kwargs),
+                       defaultWhenFalse=True,
+                       elideNoneAs='')
 
     def _parseColon_plus(self, d, kw, repl):
         return _Lookup(d, kw,
-               hasKey=Interpolate(repl, **self.kwargs),
-               default='',
-               defaultWhenFalse=False,
-               elideNoneAs='')
+                       hasKey=Interpolate(repl, **self.kwargs),
+                       default='',
+                       defaultWhenFalse=False,
+                       elideNoneAs='')
 
     def _parseColon_ternary(self, d, kw, repl, defaultWhenFalse=False):
         delim = repl[0]
@@ -524,10 +561,10 @@ class Interpolate(util.ComparableMixin, object):
             config.error("invalid Interpolate ternary expression '%s' with delimiter '%s'" % (repl[1:], repl[0]))
             return None
         return _Lookup(d, kw,
-               hasKey=Interpolate(truePart, **self.kwargs),
-               default=Interpolate(falsePart, **self.kwargs),
-               defaultWhenFalse=defaultWhenFalse,
-               elideNoneAs='')
+                       hasKey=Interpolate(truePart, **self.kwargs),
+                       default=Interpolate(falsePart, **self.kwargs),
+                       defaultWhenFalse=defaultWhenFalse,
+                       elideNoneAs='')
 
     def _parseColon_ternary_hash(self, d, kw, repl):
         return self._parseColon_ternary(d, kw, repl, defaultWhenFalse=True)
@@ -535,22 +572,22 @@ class Interpolate(util.ComparableMixin, object):
     def _parse(self, fmtstring):
         keys = _getInterpolationList(fmtstring)
         for key in keys:
-            if not self.interpolations.has_key(key):
+            if not key in self.interpolations:
                 d, kw, repl = self._parseSubstitution(key)
                 if repl is None:
                     repl = '-'
                 for pattern, fn in [
-                    ( "-", self._parseColon_minus ),
-                    ( "~", self._parseColon_tilde ),
-                    ( "+", self._parseColon_plus ),
-                    ( "?", self._parseColon_ternary ),
-                    ( "#?", self._parseColon_ternary_hash )
-                    ]:
+                    ("-", self._parseColon_minus),
+                    ("~", self._parseColon_tilde),
+                    ("+", self._parseColon_plus),
+                    ("?", self._parseColon_ternary),
+                    ("#?", self._parseColon_ternary_hash)
+                ]:
                     junk, matches, tail = repl.partition(pattern)
                     if not junk and matches:
                         self.interpolations[key] = fn(d, kw, tail)
                         break
-                if not self.interpolations.has_key(key):
+                if not key in self.interpolations:
                     config.error("invalid Interpolate default type '%s'" % repl[0])
 
     def getRenderingFor(self, props):
@@ -558,22 +595,24 @@ class Interpolate(util.ComparableMixin, object):
         if self.args:
             d = props.render(self.args)
             d.addCallback(lambda args:
-                self.fmtstring % tuple(args))
+                          self.fmtstring % tuple(args))
             return d
         else:
             d = props.render(self.interpolations)
             d.addCallback(lambda res:
-                self.fmtstring % res)
+                          self.fmtstring % res)
             return d
 
+
 class Property(util.ComparableMixin):
+
     """
     An instance of this class renders a property of a build.
     """
 
     implements(IRenderable)
 
-    compare_attrs = ('key','default', 'defaultWhenFalse')
+    compare_attrs = ('key', 'default', 'defaultWhenFalse')
 
     def __init__(self, key, default=None, defaultWhenFalse=True):
         """
@@ -590,6 +629,7 @@ class Property(util.ComparableMixin):
     def getRenderingFor(self, props):
         if self.defaultWhenFalse:
             d = props.render(props.getProperty(self.key))
+
             @d.addCallback
             def checkDefault(rv):
                 if rv:
@@ -603,6 +643,33 @@ class Property(util.ComparableMixin):
             else:
                 return props.render(self.default)
 
+
+class FlattenList(util.ComparableMixin):
+
+    """
+    An instance of this class flattens all nested lists in a list
+    """
+    implements(IRenderable)
+
+    compare_attrs = ('nestedlist')
+
+    def __init__(self, nestedlist, types=(list, tuple)):
+        """
+        @param nestedlist: a list of values to render
+        @param types: only flatten these types. defaults to (list, tuple)
+        """
+        self.nestedlist = nestedlist
+        self.types = types
+
+    def getRenderingFor(self, props):
+        d = props.render(self.nestedlist)
+
+        def flat(r):
+            return flatten(r, self.types)
+        d.addCallback(flat)
+        return d
+
+
 class _Renderer(util.ComparableMixin, object):
     implements(IRenderable)
 
@@ -614,12 +681,15 @@ class _Renderer(util.ComparableMixin, object):
     def __repr__(self):
         return 'renderer(%r)' % (self.getRenderingFor,)
 
+
 def renderer(fn):
     return _Renderer(fn)
 
+
 class _DefaultRenderer(object):
+
     """
-    Default IRenderable adaptor. Calls .getRenderingFor if availble, otherwise
+    Default IRenderable adaptor. Calls .getRenderingFor if available, otherwise
     returns argument unchanged.
     """
 
@@ -638,6 +708,7 @@ registerAdapter(_DefaultRenderer, object, IRenderable)
 
 
 class _ListRenderer(object):
+
     """
     List IRenderable adaptor. Maps Build.render over the list.
     """
@@ -648,12 +719,13 @@ class _ListRenderer(object):
         self.value = value
 
     def getRenderingFor(self, build):
-        return defer.gatherResults([ build.render(e) for e in self.value ])
+        return defer.gatherResults([build.render(e) for e in self.value])
 
 registerAdapter(_ListRenderer, list, IRenderable)
 
 
 class _TupleRenderer(object):
+
     """
     Tuple IRenderable adaptor. Maps Build.render over the tuple.
     """
@@ -664,7 +736,7 @@ class _TupleRenderer(object):
         self.value = value
 
     def getRenderingFor(self, build):
-        d = defer.gatherResults([ build.render(e) for e in self.value ])
+        d = defer.gatherResults([build.render(e) for e in self.value])
         d.addCallback(tuple)
         return d
 
@@ -672,6 +744,7 @@ registerAdapter(_TupleRenderer, tuple, IRenderable)
 
 
 class _DictRenderer(object):
+
     """
     Dict IRenderable adaptor. Maps Build.render over the keya and values in the dict.
     """
@@ -679,7 +752,7 @@ class _DictRenderer(object):
     implements(IRenderable)
 
     def __init__(self, value):
-        self.value = _ListRenderer([ _TupleRenderer((k,v)) for k,v in value.iteritems() ])
+        self.value = _ListRenderer([_TupleRenderer((k, v)) for k, v in value.iteritems()])
 
     def getRenderingFor(self, build):
         d = self.value.getRenderingFor(build)

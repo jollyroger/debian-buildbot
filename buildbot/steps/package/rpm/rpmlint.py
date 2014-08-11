@@ -21,10 +21,11 @@ from buildbot.steps.shell import Test
 
 
 class RpmLint(Test):
+
     """
     Rpmlint build step.
     """
-    
+
     name = "rpmlint"
 
     description = ["Checking for RPM/SPEC issues"]
@@ -52,6 +53,7 @@ class RpmLint(Test):
             self.fileloc = fileloc
         if config:
             self.config = config
+        self.addFactoryArguments(fileloc=fileloc, config=config)
 
         self.command = ["rpmlint", "-i"]
         if self.config:
@@ -72,6 +74,6 @@ class RpmLint(Test):
             elif ' E: ' in line:
                 errors.append(line)
         if warnings:
-            self.addCompleteLog('%d Warnings'%len(warnings), "".join(warnings))
+            self.addCompleteLog('%d Warnings' % len(warnings), "".join(warnings))
         if errors:
-            self.addCompleteLog('%d Errors'%len(errors), "".join(errors))
+            self.addCompleteLog('%d Errors' % len(errors), "".join(errors))

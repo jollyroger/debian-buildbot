@@ -3,6 +3,10 @@
 Change Sources
 --------------
 
+.. contents::
+    :depth: 2
+    :local:
+
 A Version Control System maintains a source tree, and tells the
 buildmaster when it changes. The first step of each :class:`Build` is typically
 to acquire a copy of some version of this tree.
@@ -63,11 +67,12 @@ Mercurial
    :file:`contrib/hg_buildbot.py` run in an 'changegroup' hook)
  * :bb:chsrc:`Change Hooks` in WebStatus
  * :bb:chsrc:`PBChangeSource` (listening for connections from
-   :file:`buildbot/changes/hgbuildbot.py` run as an in-process 'changegroup'
-   hook)
+ * BitBucket change hook (specifically designed for BitBucket notifications,
+    but requiring a publicly-accessible WebStatus)
  * :bb:chsrc:`HgPoller` (polling a remote Mercurial repository)
  * :bb:chsrc:`GoogleCodeAtomPoller` (polling the
    commit feed for a GoogleCode Git repository)
+ * :bb:chsrc:`BitbucketPullrequestPoller` (polling Bitbucket for pull requests)
 
 Bzr (the newer Bazaar)
  * :bb:chsrc:`PBChangeSource` (listening for connections from
@@ -84,9 +89,12 @@ Git
  * :bb:chsrc:`Change Hooks` in WebStatus
  * GitHub change hook (specifically designed for GitHub notifications,
    but requiring a publicly-accessible WebStatus)
+ * BitBucket change hook (specifically designed for BitBucket notifications,
+   but requiring a publicly-accessible WebStatus)
  * :bb:chsrc:`GitPoller` (polling a remote Git repository)
  * :bb:chsrc:`GoogleCodeAtomPoller` (polling the
    commit feed for a GoogleCode Git repository)
+ * :bb:chsrc:`BitbucketPullrequestPoller` (polling Bitbucket for pull requests)
 
 
 Repo/Git
@@ -231,7 +239,9 @@ slash, so something like ``~/MAILDIR/``\. qmail and postfix are
 maildir-capable MTAs, and procmail is a maildir-capable MDA (Mail
 Delivery Agent).
 
-Here is an example procmail config, located in :file:`~/.procmailrc`::
+Here is an example procmail config, located in :file:`~/.procmailrc`:
+
+.. code-block:: none
 
     # .procmailrc
     # routes incoming mail to appropriate mailboxes
@@ -245,7 +255,9 @@ Here is an example procmail config, located in :file:`~/.procmailrc`::
     new
 
 If procmail is not setup on a system wide basis, then the following one-line
-:file:`.forward` file will invoke it. ::
+:file:`.forward` file will invoke it.
+
+.. code-block:: none
 
     !/usr/bin/procmail
 
@@ -335,11 +347,15 @@ Configuration of CVS and buildbot_cvs_mail.py
 CVS must be configured to invoke the buildbot_cvs_mail.py script when files
 are checked in. This is done via the CVS loginfo configuration file.
 
-To update this, first do::
+To update this, first do:
+
+.. code-block:: bash
 
     cvs checkout CVSROOT
 
-cd to the CVSROOT directory and edit the file loginfo, adding a line like::
+cd to the CVSROOT directory and edit the file loginfo, adding a line like:
+
+.. code-block:: none
 
     SomeModule /cvsroot/CVSROOT/buildbot_cvs_mail.py --cvsroot :ext:example.com:/cvsroot -e buildbot -P SomeModule %@{sVv@}
 
@@ -479,181 +495,6 @@ For example::
 
 The following hooks are useful for sending changes to a :bb:chsrc:`PBChangeSource`\:
 
-.. _Mercurial-Hook:
-
-Mercurial Hook
-++++++++++++++
-
-Since Mercurial is written in Python, the hook script can invoke
-Buildbot's :meth:`sendchange` function directly, rather than having to
-spawn an external process. This function delivers the same sort of
-changes as :command:`buildbot sendchange` and the various hook scripts in
-:file:`contrib/`, so you'll need to add a :bb:chsrc:`PBChangeSource` to your
-buildmaster to receive these changes.
-
-To set this up, first choose a Mercurial repository that represents
-your central `official` source tree. This will be the same
-repository that your buildslaves will eventually pull from. Install
-Buildbot on the machine that hosts this repository, using the same
-version of Python as Mercurial is using (so that the Mercurial hook
-can import code from buildbot). Then add the following to the
-:file:`.hg/hgrc` file in that repository, replacing the buildmaster
-hostname/portnumber as appropriate for your buildbot:
-
-.. code-block:: ini
-
-    [hooks]
-    changegroup.buildbot = python:buildbot.changes.hgbuildbot.hook
-    
-    [hgbuildbot]
-    master = buildmaster.example.org:9987
-    # .. other hgbuildbot parameters ..
-
-The ``master`` configuration key allows to have more than one buildmaster
-specification. The buildmasters have to be separated by a whitspace
-or comma (see also 'hg help config'):
-
-.. code-block:: ini
-
-    master = 
-        buildmaster.example.org:9987
-        buildmaster2.example.org:9989
-
-.. note:: Mercurial lets you define multiple ``changegroup`` hooks by
-   giving them distinct names, like ``changegroup.foo`` and
-   ``changegroup.bar``, which is why we use ``changegroup.buildbot``
-   in this example. There is nothing magical about the `buildbot`
-   suffix in the hook name. The ``[hgbuildbot]`` section *is* special,
-   however, as it is the only section that the buildbot hook pays
-   attention to.) 
-
-Also note that this runs as a ``changegroup`` hook, rather than as
-an ``incoming`` hook. The ``changegroup`` hook is run with
-multiple revisions at a time (say, if multiple revisions are being
-pushed to this repository in a single :command:`hg push` command),
-whereas the ``incoming`` hook is run with just one revision at a
-time. The ``hgbuildbot.hook`` function will only work with the
-``changegroup`` hook.
-
-Changes' attribute ``properties`` has an entry ``is_merge`` which is set to
-true when the change was caused by a merge.
-
-Authentication
-##############
-
-If the buildmaster :bb:chsrc:`PBChangeSource` is configured to require
-sendchange credentials then you can set these with the ``auth``
-parameter. When this parameter is not set it defaults to
-``change:changepw``, which are the defaults for the ``user`` and
-``password`` values of a ``PBChangeSource`` which doesn't require
-authentication. 
-
-.. code-block:: ini
-
-    [hgbuildbot]
-    auth = clientname:supersecret
-    # ...
-
-You can set this parameter in either the global :file:`/etc/mercurial/hgrc`,
-your personal :file:`~/.hgrc` file or the repository local :file:`.hg/hgrc`
-file. But since this value is stored in plain text, you must make sure that
-it can only be read by those users that need to know the authentication
-credentials.
-
-Branch Type
-###########
-
-The ``[hgbuildbot]`` section has two other parameters that you
-might specify, both of which control the name of the branch that is
-attached to the changes coming from this hook.
-
-One common branch naming policy for Mercurial repositories is to use
-Mercurial's built-in branches (the kind created with :command:`hg
-branch` and listed with :command:`hg branches`). This feature
-associates persistent names with particular  lines of descent within a
-single repository. (note that the buildbot ``source.Mercurial``
-checkout step does not yet support this kind of branch). To have the
-commit hook deliver this sort of branch name with the Change object,
-use ``branchtype = inrepo``, this is the default behavior:
-
-.. code-block:: ini
-
-    [hgbuildbot]
-    branchtype = inrepo
-    # ...
-
-Another approach is for each branch to go into a separate repository,
-and all the branches for a single project share a common parent
-directory. For example, you might have :file:`/var/repos/{PROJECT}/trunk/` and
-:file:`/var/repos/{PROJECT}/release`. To use this style, use the
-``branchtype = dirname`` setting, which simply uses the last component
-of the repository's enclosing directory as the branch name:
-
-.. code-block:: ini
-
-    [hgbuildbot]
-    branchtype = dirname
-    # ...
-
-Finally, if you want to simply specify the branchname directly, for
-all changes, use ``branch = BRANCHNAME``. This overrides
-``branchtype``:
-
-.. code-block:: ini
-
-    [hgbuildbot]
-    branch = trunk
-    # ...
-
-If you use ``branch=`` like this, you'll need to put a separate
-:file:`.hgrc` in each repository. If you use ``branchtype=``, you may be
-able to use the same :file:`.hgrc` for all your repositories, stored in
-:file:`~/.hgrc` or :file:`/etc/mercurial/hgrc`.
-
-Compatibility
-#############
-
-As twisted needs to hook some signals, and some web servers 
-strictly forbid that, the parameter ``fork`` in the
-``[hgbuildbot]`` section will instruct Mercurial to fork before
-sending the change request. Then as the created process will be of short
-life, it is considered as safe to disable the signal restriction in
-the Apache setting like that ``WSGIRestrictSignal Off``. Refer to the
-documentation of your web server for other way to do the same.
-
-Resulting Changes
-#################
-
-The ``category`` parameter sets the category for any changes generated from
-the hook.  Likewise, the ``project`` parameter sets the project.
-
-Changes' ``repository`` attributes are formed from the Mercurial repo path by
-stripping ``strip`` slashes on the left, then prepending the ``baseurl``.  For
-example, assume the following parameters:
-
-.. code-block:: ini
-
-    [hgbuildbot]
-    baseurl = http://hg.myorg.com/repos/
-    strip = 3
-    # ...
-
-Then a repopath of ``/var/repos/myproject/release`` would have its left 3
-slashes stripped, leaving ``myproject/release``, after which the base URL would
-be prepended, to create ``http://hg.myorg.com/repos/myproject/release``.
-
-The ``hgbuildbot`` ``baseurl`` value defaults to the value of the same
-parameter in the ``web`` section of the configuration.
-
-.. note:: older versions of Buildbot created repository strings that did not
-    contain an entire URL.  To continue this pattern, set the ``hgbuildbot``
-    ``baseurl`` parameter to an empty string:
-
-    .. code-block:: ini
-
-        [hgbuildbot]
-        baseurl = http://hg.myorg.com/repos/
-
 .. _Bzr-Hook:
 
 Bzr Hook
@@ -730,9 +571,6 @@ P4Source
 The :bb:chsrc:`P4Source` periodically polls a `Perforce <http://www.perforce.com/>`_
 depot for changes. It accepts the following arguments:
 
-``p4base``
-    The base depot path to watch, without the trailing '/...'.
-
 ``p4port``
     The Perforce server to connect to (as :samp:`{host}:{port}`).
 
@@ -741,6 +579,9 @@ depot for changes. It accepts the following arguments:
 
 ``p4passwd``
     The Perforce password.
+
+``p4base``
+    The base depot path to watch, without the trailing '/...'.
 
 ``p4bin``
     An optional string parameter. Specify the location of the perforce command
@@ -756,6 +597,14 @@ depot for changes. It accepts the following arguments:
 ``pollInterval``
     How often to poll, in seconds. Defaults to 600 (10 minutes).
 
+``project``
+    Set the name of the project to be used for the :bb:chsrc:`P4Source`. This will then be set in any changes generated
+    by the ``P4Source``, and can be used in a Change Filter for triggering particular builders.
+
+``pollAtLaunch``
+    Determines when the first poll occurs. True = immediately on launch,
+    False = wait for one pollInterval (default).
+
 ``histmax``
     The maximum number of changes to inspect at a time. If more than this
     number occur since the last poll, older changes will be silently
@@ -763,7 +612,14 @@ depot for changes. It accepts the following arguments:
 
 ``encoding``
     The character encoding of ``p4``\'s output.  This defaults to "utf8", but
-    if your commit messages are in another encoding, specify that here.
+    if your commit messages are in another encoding, specify that here. For example,
+    if you're using Perforce on Windows, you may need to use "cp437" as the
+    encoding if "utf8" generates errors in your master log.
+
+``server_tz``
+    The timezone of the Perforce server, using the usual timezone format
+    (e.g: ``Europe/Stockholm``) in case it's in a different timezone than the
+    buildbot master.
 
 Example
 +++++++
@@ -815,6 +671,10 @@ changed since the last query.
 
 ``pollInterval``
     The time (in seconds) between queries for changes.
+
+``pollAtLaunch``
+    Determines when the first poll occurs. True = immediately on launch,
+    False = wait for one pollInterval (default).
 
 ``project``
     The project name to attach to all change objects produced by this
@@ -891,6 +751,10 @@ multiple branches.
     faster, raise it if you want to reduce the network and CPU load on
     your svn server. Please be considerate of public SVN repositories by
     using a large interval when polling them.
+
+``pollAtLaunch``
+    Determines when the first poll occurs. True = immediately on launch,
+    False = wait for one pollInterval (default).
 
 ``histmax``
     The maximum number of changes to inspect at a time. Every ``pollInterval``
@@ -1033,7 +897,13 @@ arguments:
     (see the :command:`git fetch` help for more info on git-url formats)
 
 ``branches``
-    a list of the branches to fetch, will default to ``['master']``
+    One of the following:
+
+    * a list of the branches to fetch.
+    * ``True`` indicating that all branches should be fetched
+    * a callable which takes a single argument.
+      It should take a remote refspec (such as ``'refs/heads/master'``, and
+      return a boolean indicating whether that branch should be fetched.
 
 ``branch``
     accepts a single branch name to fetch.
@@ -1041,6 +911,10 @@ arguments:
 
 ``pollInterval``
     interval in seconds between polls, default is 10 minutes
+
+``pollAtLaunch``
+    Determines when the first poll occurs. True = immediately on launch,
+    False = wait for one pollInterval (default).
 
 ``gitbin``
     path to the Git binary, defaults to just ``'git'``
@@ -1087,10 +961,6 @@ A configuration for the Git poller might look like this::
 HgPoller
 ~~~~~~~~
 
-If you cannot take advantage of post-receive hooks as provided by
-:file:`buildbot/changes/hgbuildbot.py` for example, then you can use the
-:bb:chsrc:`HgPoller`.
-
 The :bb:chsrc:`HgPoller` periodically pulls a named branch from a remote
 Mercurial repository and processes any changes. It requires its own working
 directory for operation, which must be specified via the ``workdir`` property.
@@ -1134,6 +1004,10 @@ The :bb:chsrc:`HgPoller` accepts the following arguments:
 ``pollInterval``
     interval in seconds between polls, default is 10 minutes
 
+``pollAtLaunch``
+    Determines when the first poll occurs. True = immediately on launch,
+    False = wait for one pollInterval (default).
+
 ``hgbin``
     path to the Mercurial binary, defaults to just ``'hg'``
 
@@ -1165,6 +1039,103 @@ A configuration for the Mercurial poller might look like this::
                                    branch='great_new_feature',
                                    workdir='hg-myrepo')
 
+.. bb:chsrc:: BitbucketPullrequestPoller
+
+.. _BitbucketPullrequestPoller:
+
+BitbucketPullrequestPoller
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. py:class:: buildbot.changes.bitbucket.BitbucketPullrequestPoller
+
+This :bb:chsrc:`BitbucketPullrequestPoller` periodically polls Bitbucket for new or updated pull requests.
+It uses Bitbuckets powerful `Pull Request REST API`_ to gather the information needed.
+
+The :bb:chsrc:`BitbucketPullrequestPoller` accepts the following arguments:
+
+``owner``
+    The owner of the Bitbucket repository. All Bitbucket Urls are of the form https://bitbucket.org/owner/slug/.
+
+``slug``
+    The name of the Bitbucket repository.
+
+``branch``
+    A single branch or a list of branches which should be processed.
+    If it is ``None`` (the default) all pull requests are used.
+
+``pollInterval``
+    Interval in seconds between polls, default is 10 minutes.
+
+``pollAtLaunch``
+    Determines when the first poll occurs. ``True`` = immediately on launch,
+    ``False`` = wait for one ``pollInterval`` (default).
+
+``category``
+    Set the category to be used for the changes produced by the
+    :bb:chsrc:`BitbucketPullrequestPoller`. This will then be set in any changes generated
+    by the :bb:chsrc:`BitbucketPullrequestPoller`, and can be used in a Change Filter for
+    triggering particular builders.
+
+``project``
+    Set the name of the project to be used for the
+    :bb:chsrc:`BitbucketPullrequestPoller`. This will then be set in any changes generated
+    by the ``BitbucketPullrequestPoller``, and can be used in a Change Filter for
+    triggering particular builders.
+
+``pullrequest_filter``
+    A callable which takes one parameter, the decoded Python object of the pull request JSON.
+    If the it returns ``False`` the pull request is ignored.
+    It can be used to define custom filters based on the content of the pull request.
+    See the Bitbucket documentation for more information about the format of the response.
+    By default the filter always returns ``True``.
+
+``usetimestamps``
+    parse each revision's commit timestamp (default is ``True``),
+    or ignore it in favor of the current time (so recently processed
+    commits appear together in the waterfall page)
+
+``encoding``
+    Set encoding will be used to parse author's name and commit
+    message. Default encoding is ``'utf-8'``.
+
+A minimal configuration for the Bitbucket pull request poller might look like this::
+
+    from buildbot.changes.bitbucket import BitbucketPullrequestPoller
+    c['change_source'] = BitbucketPullrequestPoller(
+        owner='myname',
+        slug='myrepo',
+      )
+
+Here is a more complex configuration using a ``pullrequest_filter``.
+The pull request is only processed if at least 3 people have already approved it::
+
+    def approve_filter(pr, threshold):
+        approves = 0
+        for participant in pr['participants']:
+            if participant['approved']:
+                approves = approves + 1
+
+        if approves < threshold:
+            return False
+        return True
+
+    from buildbot.changes.bitbucket import BitbucketPullrequestPoller
+    c['change_source'] = BitbucketPullrequestPoller(
+        owner='myname',
+        slug='myrepo',
+        branch='mybranch',
+        project='myproject',
+        pullrequest_filter=lambda pr : approve_filter(pr,3),
+        pollInterval=600,
+      )
+
+.. warning::
+
+    Anyone who can create pull requests for the Bitbucket repository can initiate a change,
+    potentially causing the buildmaster to run arbitrary code.
+
+.. _Pull Request REST API: https://confluence.atlassian.com/display/BITBUCKET/pullrequests+Resource
+
 .. bb:chsrc:: GerritChangeSource
 
 .. _GerritChangeSource:
@@ -1176,9 +1147,28 @@ GerritChangeSource
 
 The :bb:chsrc:`GerritChangeSource` class connects to a Gerrit server by its SSH
 interface and uses its event source mechanism,
-`gerrit stream-events <http://gerrit.googlecode.com/svn/documentation/2.1.6/cmd-stream-events.html>`_.
+`gerrit stream-events <http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-stream-events.html>`_.
 
-This class adds a change to the buildbot system for each of the following events:
+The :bb:chsrc:`GerritChangeSource` accepts the following arguments:
+
+``gerritserver``
+   the dns or ip that host the gerrit ssh server
+
+``gerritport``
+   the port of the gerrit ssh server
+
+``username``
+   the username to use to connect to gerrit
+
+``identity_file``
+   ssh identity file to for authentication (optional) 
+   pay attention to the `ssh passphrase`
+
+``handled_events``
+   event to be handled (optional)
+   by default processes `patchset-created` and `ref-updated`
+
+By default this class adds a change to the buildbot system for each of the following events:
 
 ``patchset-created``
     A change is proposed for review. Automatic checks like
@@ -1191,6 +1181,26 @@ This class adds a change to the buildbot system for each of the following events
     A change has been merged into the repository. Typically, this kind
     of event can lead to a complete rebuild of the project, and upload
     binaries to an incremental build results server.
+
+But you can specify how to handle Events:
+
+* Any event with change and patchSet will 
+  be processed by universal collector by default.
+
+* In case you've specified processing function for the given kind of events, 
+  all events of this kind will be processed only by this function, bypassing universal collector.
+
+An example::
+
+    from buildbot.changes.gerritchangesource import GerritChangeSource
+    class MyGerritChangeSource(GerritChangeSource):
+        """Custom GerritChangeSource
+        """
+        def eventReceived_patchset_created(self, properties, event):
+            """Handler events without properties
+            """
+            properties = {}
+            self.addChangeFromEvent(properties, event)
 
 This class will populate the property list of the triggered build with the info
 received from Gerrit server in JSON format.
@@ -1256,10 +1266,13 @@ In case of ``ref-updated`` event, these properties will be:
 A configuration for this source might look like::
 
     from buildbot.changes.gerritchangesource import GerritChangeSource
-    c['change_source'] = GerritChangeSource(gerrit_server, gerrit_user)
+    c['change_source'] = GerritChangeSource(
+        "gerrit.example.com",
+        "gerrit_user",
+        handled_events=["patchset-created", "change-merged"])
 
-see :file:`master/docs/examples/repo_gerrit.cfg` in the Buildbot distribution
-for a full example setup of :bb:chsrc:`GerritChangeSource`.
+see :file:`master/docs/examples/git_gerrit.cfg` or :file:`master/docs/examples/repo_gerrit.cfg` in the Buildbot distribution
+for a full example setup of Git+Gerrit or Repo+Gerrit of :bb:chsrc:`GerritChangeSource`.
 
 .. bb:chsrc:: Change Hooks
 

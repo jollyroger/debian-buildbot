@@ -14,10 +14,15 @@
 # Copyright Buildbot Team Members
 
 import datetime
+import mock
+import os
 
+from twisted.internet import reactor
+from twisted.internet import task
 from twisted.trial import unittest
 
 from buildbot import util
+
 
 class formatInterval(unittest.TestCase):
 
@@ -54,6 +59,7 @@ class formatInterval(unittest.TestCase):
     def test_mixed(self):
         self.assertEqual(util.formatInterval(7392), "2 hrs, 3 mins, 12 secs")
 
+
 class safeTranslate(unittest.TestCase):
 
     def test_str_good(self):
@@ -66,7 +72,7 @@ class safeTranslate(unittest.TestCase):
     def test_str_pathological(self):
         # if you needed proof this wasn't for use with sensitive data
         self.assertEqual(util.safeTranslate(str("p\ath\x01ogy")),
-                         str("p\ath\x01ogy")) # bad chars still here!
+                         str("p\ath\x01ogy"))  # bad chars still here!
 
     def test_unicode_good(self):
         self.assertEqual(util.safeTranslate(u"full"), str("full"))
@@ -77,24 +83,26 @@ class safeTranslate(unittest.TestCase):
 
     def test_unicode_pathological(self):
         self.assertEqual(util.safeTranslate(u"\u0109"),
-                         str("\xc4\x89")) # yuck!
+                         str("\xc4\x89"))  # yuck!
+
 
 class naturalSort(unittest.TestCase):
 
     def test_alpha(self):
         self.assertEqual(
-                util.naturalSort(['x', 'aa', 'ab']),
-                ['aa', 'ab', 'x'])
+            util.naturalSort(['x', 'aa', 'ab']),
+            ['aa', 'ab', 'x'])
 
     def test_numeric(self):
         self.assertEqual(
-                util.naturalSort(['1', '10', '11', '2', '20']),
-                ['1', '2', '10', '11', '20'])
+            util.naturalSort(['1', '10', '11', '2', '20']),
+            ['1', '2', '10', '11', '20'])
 
     def test_alphanum(self):
         l1 = 'aa10ab aa1ab aa10aa f a aa3 aa30 aa3a aa30a'.split()
         l2 = 'a aa1ab aa3 aa3a aa10aa aa10ab aa30 aa30a f'.split()
         self.assertEqual(util.naturalSort(l1), l2)
+
 
 class none_or_str(unittest.TestCase):
 
@@ -107,6 +115,7 @@ class none_or_str(unittest.TestCase):
     def test_int(self):
         self.assertEqual(util.none_or_str(199), "199")
 
+
 class TimeFunctions(unittest.TestCase):
 
     def test_UTC(self):
@@ -118,15 +127,16 @@ class TimeFunctions(unittest.TestCase):
 
     def test_epoch2datetime(self):
         self.assertEqual(util.epoch2datetime(0),
-                datetime.datetime(1970, 1, 1, 0, 0, 0, tzinfo=util.UTC))
+                         datetime.datetime(1970, 1, 1, 0, 0, 0, tzinfo=util.UTC))
         self.assertEqual(util.epoch2datetime(1300000000),
-                datetime.datetime(2011, 3, 13, 7, 6, 40, tzinfo=util.UTC))
+                         datetime.datetime(2011, 3, 13, 7, 6, 40, tzinfo=util.UTC))
 
     def test_datetime2epoch(self):
         dt = datetime.datetime(1970, 1, 1, 0, 0, 0, tzinfo=util.UTC)
         self.assertEqual(util.datetime2epoch(dt), 0)
         dt = datetime.datetime(2011, 3, 13, 7, 6, 40, tzinfo=util.UTC)
         self.assertEqual(util.datetime2epoch(dt), 1300000000)
+
 
 class DiffSets(unittest.TestCase):
 
@@ -154,31 +164,33 @@ class DiffSets(unittest.TestCase):
         removed, added = util.diffSets(set([1, 2]), set([1]))
         self.assertEqual((removed, added), (set([2]), set([])))
 
+
 class MakeList(unittest.TestCase):
 
     def test_empty_string(self):
-        self.assertEqual(util.makeList(''), [ '' ])
+        self.assertEqual(util.makeList(''), [''])
 
     def test_None(self):
-        self.assertEqual(util.makeList(None), [ ])
+        self.assertEqual(util.makeList(None), [])
 
     def test_string(self):
-        self.assertEqual(util.makeList('hello'), [ 'hello' ])
+        self.assertEqual(util.makeList('hello'), ['hello'])
 
     def test_unicode(self):
-        self.assertEqual(util.makeList(u'\N{SNOWMAN}'), [ u'\N{SNOWMAN}' ])
+        self.assertEqual(util.makeList(u'\N{SNOWMAN}'), [u'\N{SNOWMAN}'])
 
     def test_list(self):
-        self.assertEqual(util.makeList(['a','b']), [ 'a', 'b' ])
+        self.assertEqual(util.makeList(['a', 'b']), ['a', 'b'])
 
     def test_tuple(self):
-        self.assertEqual(util.makeList(('a','b')), [ 'a', 'b' ])
+        self.assertEqual(util.makeList(('a', 'b')), ['a', 'b'])
 
     def test_copy(self):
         input = ['a', 'b']
         output = util.makeList(input)
         input.append('c')
-        self.assertEqual(output, [ 'a', 'b' ])
+        self.assertEqual(output, ['a', 'b'])
+
 
 class Flatten(unittest.TestCase):
 
@@ -186,9 +198,38 @@ class Flatten(unittest.TestCase):
         self.assertEqual(util.flatten([1, 2, 3]), [1, 2, 3])
 
     def test_deep(self):
-        self.assertEqual(util.flatten([ [ 1, 2 ], 3, [ [ 4 ] ] ]),
-                                [1, 2, 3, 4])
+        self.assertEqual(util.flatten([[1, 2], 3, [[4]]]),
+                         [1, 2, 3, 4])
 
     def test_tuples(self):
-        self.assertEqual(util.flatten([ ( 1, 2 ), 3 ]), [ (1, 2), 3 ])
+        self.assertEqual(util.flatten([(1, 2), 3]), [(1, 2), 3])
 
+
+class AsyncSleep(unittest.TestCase):
+
+    def test_sleep(self):
+        clock = task.Clock()
+        self.patch(reactor, 'callLater', clock.callLater)
+        d = util.asyncSleep(2)
+        self.assertFalse(d.called)
+        clock.advance(1)
+        self.assertFalse(d.called)
+        clock.advance(1)
+        self.assertTrue(d.called)
+
+
+class FunctionalEnvironment(unittest.TestCase):
+
+    def test_working_locale(self):
+        environ = {'LANG': 'en_GB.UTF-8'}
+        self.patch(os, 'environ', environ)
+        config = mock.Mock()
+        util.check_functional_environment(config)
+        self.assertEqual(config.error.called, False)
+
+    def test_broken_locale(self):
+        environ = {'LANG': 'NINE.UTF-8'}
+        self.patch(os, 'environ', environ)
+        config = mock.Mock()
+        util.check_functional_environment(config)
+        config.error.assert_called()

@@ -452,7 +452,7 @@ prioritized from oldest to newest, so when a buildslave becomes free, the
 
 The :class:`BuildRequest` contains one :class:`SourceStamp` specification per codebase.
 The actual process of running the build (the series of :class:`Step`\s that will
-be executed) is implemented by the :class:`Build` object. In this future
+be executed) is implemented by the :class:`Build` object. In the future
 this might be changed, to have the :class:`Build` define *what*
 gets built, and a separate :class:`BuildProcess` (provided by the
 Builder) to define *how* it gets built.
@@ -624,7 +624,7 @@ more complete view of users throughout Buildbot.
 
 One such use is being able to find email addresses based on a set of Builds
 to notify users through the ``MailNotifier``. This process is explained
-more clearly in :ref:``Email-Addresses``.
+more clearly in :ref:`Email-Addresses`.
 
 Another way to utilize `User Objects` is through `UsersAuth` for web authentication
 (see :bb:status:`WebStatus`). To use `UsersAuth`, you need to

@@ -13,21 +13,23 @@
 #
 # Copyright Buildbot Team Members
 
-from zope.interface import implements
-from twisted.python import log
-from twisted.internet import defer
 from buildbot import interfaces
 from buildbot.util.eventual import eventually
+from twisted.internet import defer
+from twisted.python import log
+from zope.interface import implements
+
 
 class BuildRequestStatus:
     implements(interfaces.IBuildRequestStatus)
 
-    def __init__(self, buildername, brid, status):
+    def __init__(self, buildername, brid, status, brdict=None):
         self.buildername = buildername
         self.brid = brid
         self.status = status
         self.master = status.master
 
+        self._brdict = brdict
         self._buildrequest = None
         self._buildrequest_lock = defer.DeferredLock()
 
@@ -51,13 +53,15 @@ class BuildRequestStatus:
 
         try:
             if not self._buildrequest:
-                brd = yield self.master.db.buildrequests.getBuildRequest(
-                                                                    self.brid)
+                if self._brdict is None:
+                    self._brdict = (
+                        yield self.master.db.buildrequests.getBuildRequest(
+                            self.brid))
 
                 br = yield buildrequest.BuildRequest.fromBrdict(self.master,
-                                                                    brd)
+                                                                self._brdict)
                 self._buildrequest = br
-        except: # try/finally isn't allowed in generators in older Pythons
+        except:  # try/finally isn't allowed in generators in older Pythons
             self._buildrequest_lock.release()
             raise
 
@@ -95,7 +99,7 @@ class BuildRequestStatus:
 
         bdicts = yield self.master.db.builds.getBuildsForRequest(self.brid)
 
-        buildnums = sorted([ bdict['number'] for bdict in bdicts ])
+        buildnums = sorted([bdict['number'] for bdict in bdicts])
 
         for buildnum in buildnums:
             bs = builder.getBuild(buildnum)
@@ -105,12 +109,13 @@ class BuildRequestStatus:
 
     def subscribe(self, observer):
         d = self.getBuilds()
+
         def notify_old(oldbuilds):
             for bs in oldbuilds:
                 eventually(observer, bs)
         d.addCallback(notify_old)
-        d.addCallback(lambda _ :
-            self.status._buildrequest_subscribe(self.brid, observer))
+        d.addCallback(lambda _:
+                      self.status._buildrequest_subscribe(self.brid, observer))
         d.addErrback(log.err, 'while notifying subscribers')
 
     def unsubscribe(self, observer):
@@ -124,12 +129,12 @@ class BuildRequestStatus:
     def asDict(self):
         result = {}
         # Constant
-        result['source'] = None # not available sync, sorry
+        result['source'] = None  # not available sync, sorry
         result['builderName'] = self.buildername
-        result['submittedAt'] = None # not availably sync, sorry
+        result['submittedAt'] = None  # not availably sync, sorry
 
         # Transient
-        result['builds'] = [] # not available async, sorry
+        result['builds'] = []  # not available async, sorry
         return result
 
     @defer.inlineCallbacks
@@ -144,6 +149,6 @@ class BuildRequestStatus:
         result['submittedAt'] = yield self.getSubmitTime()
 
         builds = yield self.getBuilds()
-        result['builds'] = [ build.asDict() for build in builds ]
+        result['builds'] = [build.asDict() for build in builds]
 
         defer.returnValue(result)

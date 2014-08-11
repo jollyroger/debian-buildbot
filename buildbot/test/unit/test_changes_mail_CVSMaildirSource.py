@@ -15,9 +15,10 @@
 
 from twisted.trial import unittest
 
-from email import message_from_string
-from email.Utils import parsedate_tz, mktime_tz
 from buildbot.changes.mail import CVSMaildirSource
+from email import message_from_string
+from email.utils import mktime_tz
+from email.utils import parsedate_tz
 
 #
 # Sample message from CVS version 1.11
@@ -49,7 +50,7 @@ Commented out some stuff.
 # Paths are handled differently by the two versions
 #
 
-cvs1_12_msg="""Date: Wed, 11 Aug 2010 04:56:44 +0000
+cvs1_12_msg = """Date: Wed, 11 Aug 2010 04:56:44 +0000
 From: andy@example.com
 To: buildbot@example.com
 Subject: cvs update for project RaiCore
@@ -70,96 +71,98 @@ Log Message:
 Changes for changes sake
 """
 
+
 class TestCVSMaildirSource(unittest.TestCase):
+
     def test_CVSMaildirSource_create_change_from_cvs1_11msg(self):
         m = message_from_string(cvs1_11_msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            src, chdict = src.parse( m )
+            src, chdict = src.parse(m)
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict != None)
-        self.assert_(chdict['author'] == 'andy')
-        self.assert_(len(chdict['files']) == 1)
-        self.assert_(chdict['files'][0] == 'base/module/src/make/GNUmakefile')
-        self.assert_(chdict['comments'] == 'Commented out some stuff.\n')
-        self.assert_(chdict['isdir'] == False)
-        self.assert_(chdict['revision'] == '2010-08-07 11:11:49')
+        self.assertNotEqual(chdict, None)
+        self.assertEqual(chdict['author'], 'andy')
+        self.assertEqual(len(chdict['files']), 1)
+        self.assertEqual(chdict['files'][0], 'base/module/src/make/GNUmakefile')
+        self.assertEqual(chdict['comments'], 'Commented out some stuff.\n')
+        self.assertFalse(chdict['isdir'])
+        self.assertEqual(chdict['revision'], '2010-08-07 11:11:49')
         dateTuple = parsedate_tz('Sat, 07 Aug 2010 11:11:49 +0000')
-        self.assert_(chdict['when'] == mktime_tz(dateTuple))
-        self.assert_(chdict['branch'] == None)
-        self.assert_(chdict['repository'] == ':ext:cvshost.example.com:/cvsroot')
-        self.assert_(chdict['project'] == 'MyModuleName')
-        self.assert_(len(chdict['properties']) == 0)
-        self.assert_(src == 'cvs')
+        self.assertEqual(chdict['when'], mktime_tz(dateTuple))
+        self.assertEqual(chdict['branch'], None)
+        self.assertEqual(chdict['repository'], ':ext:cvshost.example.com:/cvsroot')
+        self.assertEqual(chdict['project'], 'MyModuleName')
+        self.assertEqual(len(chdict['properties']), 0)
+        self.assertEqual(src, 'cvs')
 
     def test_CVSMaildirSource_create_change_from_cvs1_12msg(self):
         m = message_from_string(cvs1_12_msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            src, chdict = src.parse( m )
+            src, chdict = src.parse(m)
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict != None)
-        self.assert_(chdict['author'] == 'andy')
-        self.assert_(len(chdict['files']) == 2)
-        self.assert_(chdict['files'][0] == 'base/module/src/file1.cpp')
-        self.assert_(chdict['files'][1] == 'base/module/src/file2.cpp')
-        self.assert_(chdict['comments'] == 'Changes for changes sake\n')
-        self.assert_(chdict['isdir'] == False)
-        self.assert_(chdict['revision'] == '2010-08-11 04:56:44')
+        self.assertNotEqual(chdict, None)
+        self.assertEqual(chdict['author'], 'andy')
+        self.assertEqual(len(chdict['files']), 2)
+        self.assertEqual(chdict['files'][0], 'base/module/src/file1.cpp')
+        self.assertEqual(chdict['files'][1], 'base/module/src/file2.cpp')
+        self.assertEqual(chdict['comments'], 'Changes for changes sake\n')
+        self.assertFalse(chdict['isdir'])
+        self.assertEqual(chdict['revision'], '2010-08-11 04:56:44')
         dateTuple = parsedate_tz('Wed, 11 Aug 2010 04:56:44 +0000')
-        self.assert_(chdict['when'] == mktime_tz(dateTuple))
-        self.assert_(chdict['branch'] == None)
-        self.assert_(chdict['repository'] == ':ext:cvshost.example.com:/cvsroot')
-        self.assert_(chdict['project'] == 'MyModuleName')
-        self.assert_(len(chdict['properties']) == 0)
-        self.assert_(src == 'cvs')
+        self.assertEqual(chdict['when'], mktime_tz(dateTuple))
+        self.assertEqual(chdict['branch'], None)
+        self.assertEqual(chdict['repository'], ':ext:cvshost.example.com:/cvsroot')
+        self.assertEqual(chdict['project'], 'MyModuleName')
+        self.assertEqual(len(chdict['properties']), 0)
+        self.assertEqual(src, 'cvs')
 
     def test_CVSMaildirSource_create_change_from_cvs1_12_with_no_path(self):
         msg = cvs1_12_msg.replace('Path: base/module/src', '')
         m = message_from_string(msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            assert src.parse( m )[1]
+            assert src.parse(m)[1]
         except ValueError:
             pass
         else:
             self.fail('Expect ValueError.')
 
     def test_CVSMaildirSource_create_change_with_bad_cvsmode(self):
-        # Branch is indicated afer 'Tag:' in modified file list
+        # Branch is indicated after 'Tag:' in modified file list
         msg = cvs1_11_msg.replace('Cvsmode: 1.11', 'Cvsmode: 9.99')
         m = message_from_string(msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            assert src.parse( m )[1]
+            assert src.parse(m)[1]
         except ValueError:
             pass
         else:
             self.fail('Expected ValueError')
 
     def test_CVSMaildirSource_create_change_with_branch(self):
-        # Branch is indicated afer 'Tag:' in modified file list
+        # Branch is indicated after 'Tag:' in modified file list
         msg = cvs1_11_msg.replace('        GNUmakefile',
                                   '      Tag: Test_Branch\n      GNUmakefile')
         m = message_from_string(msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            chdict = src.parse( m )[1]
+            chdict = src.parse(m)[1]
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict['branch'] == 'Test_Branch')
+        self.assertEqual(chdict['branch'], 'Test_Branch')
 
     def test_CVSMaildirSource_create_change_with_category(self):
         msg = cvs1_11_msg.replace('Category: None', 'Category: Test category')
         m = message_from_string(msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            chdict = src.parse( m )[1]
+            chdict = src.parse(m)[1]
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict['category'] == 'Test category')
+        self.assertEqual(chdict['category'], 'Test category')
 
     def test_CVSMaildirSource_create_change_with_no_comment(self):
         # Strip off comments
@@ -167,48 +170,48 @@ class TestCVSMaildirSource(unittest.TestCase):
         m = message_from_string(msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            chdict = src.parse( m )[1]
+            chdict = src.parse(m)[1]
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict['comments'] == None )
+        self.assertEqual(chdict['comments'], None)
 
     def test_CVSMaildirSource_create_change_with_no_files(self):
         # A message with no files is likely not for us
-        msg = cvs1_11_msg.replace('Files: base/module/src/make GNUmakefile,1.362,1.363','')
+        msg = cvs1_11_msg.replace('Files: base/module/src/make GNUmakefile,1.362,1.363', '')
         m = message_from_string(msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            chdict = src.parse( m )
+            chdict = src.parse(m)
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict == None )
+        self.assertEqual(chdict, None)
 
     def test_CVSMaildirSource_create_change_with_no_project(self):
         msg = cvs1_11_msg.replace('Project: MyModuleName', '')
         m = message_from_string(msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            chdict = src.parse( m )[1]
+            chdict = src.parse(m)[1]
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict['project'] == None )
+        self.assertEqual(chdict['project'], None)
 
     def test_CVSMaildirSource_create_change_with_no_repository(self):
         msg = cvs1_11_msg.replace('CVSROOT: :ext:cvshost.example.com:/cvsroot', '')
         m = message_from_string(msg)
         src = CVSMaildirSource('/dev/null')
         try:
-            chdict = src.parse( m )[1]
+            chdict = src.parse(m)[1]
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict['repository'] == None )
+        self.assertEqual(chdict['repository'], None)
 
     def test_CVSMaildirSource_create_change_with_property(self):
         m = message_from_string(cvs1_11_msg)
-        propDict = { 'foo' : 'bar' }
+        propDict = {'foo': 'bar'}
         src = CVSMaildirSource('/dev/null', properties=propDict)
         try:
-            chdict = src.parse( m )[1]
+            chdict = src.parse(m)[1]
         except:
             self.fail('Failed to get change from email message.')
-        self.assert_(chdict['properties']['foo'] == 'bar')
+        self.assertEqual(chdict['properties']['foo'], 'bar')

@@ -1,2 +1,4 @@
 fix-interpreters.patch
 fix-init-scripts.patch
+#sphinx-doesnt-seem-to-support-relative-paths-for-log-anymore.patch
+disable-sqlalchemy-version-check.diff

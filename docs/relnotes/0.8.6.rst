@@ -95,8 +95,8 @@ Deprecations, Removals, and Non-Compatible Changes
 * The format of the repository strings created by ``hgbuildbot`` has changed to
   contain the entire repository URL, based on the ``web.baseurl`` value in
   ``hgrc``.  To continue the old (incorrect) behavior, set
-  ``hgbuildbot.baseurl`` to an empty string as suggested in :ref:`the Buildbot
-  manual <Mercurial-Hook>`.
+  ``hgbuildbot.baseurl`` to an empty string as suggested in the Buildbot
+  manual.
 
 * Master Side :bb:step:`SVN` Step has been corrected to properly use
   ``--revision`` when ``alwaysUseLatest`` is set to ``False`` when in the
@@ -210,7 +210,9 @@ Details
 -------
 
 For a more detailed description of the changes made in this version, see the
-Git log itself::
+Git log itself:
+
+.. code-block:: bash
 
    git log buildbot-0.8.5..buildbot-0.8.6
 

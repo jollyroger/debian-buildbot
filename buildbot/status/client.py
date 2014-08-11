@@ -14,19 +14,25 @@
 # Copyright Buildbot Team Members
 
 
-from twisted.spread import pb
-from twisted.python import components, log as twlog
 from twisted.application import strports
-from twisted.cred import portal, checkers
+from twisted.cred import checkers
+from twisted.cred import portal
+from twisted.python import components
+from twisted.python import log as twlog
+from twisted.spread import pb
 
 from buildbot import interfaces
-from zope.interface import Interface, implements
-from buildbot.status import logfile, base
 from buildbot.changes import changes
+from buildbot.status import base
+from buildbot.status import logfile
 from buildbot.util.eventual import eventually
+from zope.interface import Interface
+from zope.interface import implements
+
 
 class IRemote(Interface):
     pass
+
 
 def makeRemote(obj):
     # we want IRemote(None) to be None, but you can't really do that with
@@ -37,6 +43,7 @@ def makeRemote(obj):
 
 
 class RemoteBuildSet(pb.Referenceable):
+
     def __init__(self, buildset):
         self.b = buildset
 
@@ -50,13 +57,14 @@ class RemoteBuildSet(pb.Referenceable):
         return self.b.getID()
 
     def remote_getBuilderNames(self):
-        return self.b.getBuilderNames() # note: passes along the Deferred
+        return self.b.getBuilderNames()  # note: passes along the Deferred
 
     def remote_getBuildRequests(self):
         """Returns a list of (builderName, BuildRequest) tuples."""
         d = self.b.getBuilderNamesAndBuildRequests()
+
         def add_remote(buildrequests):
-            for k,v in buildrequests.iteritems():
+            for k, v in buildrequests.iteritems():
                 buildrequests[k] = IRemote(v)
             return buildrequests.items()
         d.addCallback(add_remote)
@@ -74,10 +82,11 @@ class RemoteBuildSet(pb.Referenceable):
         return self.b.getResults()
 
 components.registerAdapter(RemoteBuildSet,
-                           interfaces.IBuildSetStatus, IRemote)    
+                           interfaces.IBuildSetStatus, IRemote)
 
 
 class RemoteBuilder(pb.Referenceable):
+
     def __init__(self, builder):
         self.b = builder
 
@@ -90,7 +99,7 @@ class RemoteBuilder(pb.Referenceable):
     def remote_getState(self):
         state, builds = self.b.getState()
         return (state,
-                None, # TODO: remove leftover ETA
+                None,  # TODO: remove leftover ETA
                 [makeRemote(b) for b in builds])
 
     def remote_getSlaves(self):
@@ -109,10 +118,11 @@ class RemoteBuilder(pb.Referenceable):
         return IRemote(self.b.getEvent(number))
 
 components.registerAdapter(RemoteBuilder,
-                           interfaces.IBuilderStatus, IRemote)    
+                           interfaces.IBuilderStatus, IRemote)
 
 
 class RemoteBuildRequest(pb.Referenceable):
+
     def __init__(self, buildreq):
         self.b = buildreq
         # mapping of observers (RemoteReference instances) to local callable
@@ -134,7 +144,7 @@ class RemoteBuildRequest(pb.Referenceable):
             d = observer.callRemote("newbuild",
                                     IRemote(bs), self.b.getBuilderName())
             d.addErrback(twlog.err,
-                    "while calling client-side remote_newbuild")
+                         "while calling client-side remote_newbuild")
         self.observers.append((observer, send))
         self.b.subscribe(send)
 
@@ -146,9 +156,11 @@ class RemoteBuildRequest(pb.Referenceable):
                 break
 
 components.registerAdapter(RemoteBuildRequest,
-                           interfaces.IBuildRequestStatus, IRemote)    
+                           interfaces.IBuildRequestStatus, IRemote)
+
 
 class RemoteBuild(pb.Referenceable):
+
     def __init__(self, build):
         self.b = build
         self.observers = []
@@ -201,9 +213,12 @@ class RemoteBuild(pb.Referenceable):
 
     def remote_getLogs(self):
         logs = {}
-        for name,log in self.b.getLogs().items():
+        for name, log in self.b.getLogs().items():
             logs[name] = IRemote(log)
         return logs
+
+    def remote_getProperties(self):
+        return self.b.getProperties().asDict()
 
     def remote_subscribe(self, observer, updateInterval=None):
         """The observer will have remote_stepStarted(buildername, build,
@@ -213,6 +228,7 @@ class RemoteBuild(pb.Referenceable):
         self.observers.append(observer)
         s = BuildSubscriber(observer)
         self.b.subscribe(s, updateInterval)
+        observer.notifyOnDisconnect(lambda _: self.b.unsubscribe(s))
 
     def remote_unsubscribe(self, observer):
         # TODO: is the observer automatically unsubscribed when the build
@@ -224,9 +240,11 @@ class RemoteBuild(pb.Referenceable):
 
 
 components.registerAdapter(RemoteBuild,
-                           interfaces.IBuildStatus, IRemote)    
+                           interfaces.IBuildStatus, IRemote)
+
 
 class BuildSubscriber:
+
     def __init__(self, observer):
         self.observer = observer
 
@@ -252,6 +270,7 @@ class BuildSubscriber:
 
 
 class RemoteBuildStep(pb.Referenceable):
+
     def __init__(self, step):
         self.s = step
 
@@ -277,7 +296,7 @@ class RemoteBuildStep(pb.Referenceable):
         return self.s.isFinished()
 
     def remote_waitUntilFinished(self):
-        return self.s.waitUntilFinished() # returns a Deferred
+        return self.s.waitUntilFinished()  # returns a Deferred
 
     def remote_getETA(self):
         return self.s.getETA()
@@ -289,37 +308,47 @@ class RemoteBuildStep(pb.Referenceable):
         return self.s.getResults()
 
 components.registerAdapter(RemoteBuildStep,
-                           interfaces.IBuildStepStatus, IRemote)    
+                           interfaces.IBuildStepStatus, IRemote)
+
 
 class RemoteSlave:
+
     def __init__(self, slave):
         self.s = slave
 
     def remote_getName(self):
         return self.s.getName()
+
     def remote_getAdmin(self):
         return self.s.getAdmin()
+
     def remote_getHost(self):
         return self.s.getHost()
+
     def remote_isConnected(self):
         return self.s.isConnected()
 
 components.registerAdapter(RemoteSlave,
                            interfaces.ISlaveStatus, IRemote)
 
+
 class RemoteEvent:
+
     def __init__(self, event):
         self.e = event
 
     def remote_getTimes(self):
         return self.s.getTimes()
+
     def remote_getText(self):
         return self.s.getText()
 
 components.registerAdapter(RemoteEvent,
                            interfaces.IStatusEvent, IRemote)
 
+
 class RemoteLog(pb.Referenceable):
+
     def __init__(self, log):
         self.l = log
 
@@ -328,6 +357,7 @@ class RemoteLog(pb.Referenceable):
 
     def remote_isFinished(self):
         return self.l.isFinished()
+
     def remote_waitUntilFinished(self):
         d = self.l.waitUntilFinished()
         d.addCallback(lambda res: self)
@@ -335,8 +365,10 @@ class RemoteLog(pb.Referenceable):
 
     def remote_getText(self):
         return self.l.getText()
+
     def remote_getTextWithHeaders(self):
         return self.l.getTextWithHeaders()
+
     def remote_getChunks(self):
         return self.l.getChunks()
     # TODO: subscription interface
@@ -344,14 +376,18 @@ class RemoteLog(pb.Referenceable):
 components.registerAdapter(RemoteLog, logfile.LogFile, IRemote)
 # TODO: something similar for builder.HTMLLogfile ?
 
+
 class RemoteChange:
+
     def __init__(self, change):
         self.c = change
 
     def getWho(self):
         return self.c.who
+
     def getFiles(self):
         return self.c.files
+
     def getComments(self):
         return self.c.comments
 
@@ -364,9 +400,9 @@ class StatusClientPerspective(base.StatusReceiverPerspective):
     client = None
 
     def __init__(self, status):
-        self.status = status # the IStatus
-        self.subscribed_to_builders = [] # Builders to which we're subscribed
-        self.subscribed_to = [] # everything else we're subscribed to
+        self.status = status  # the IStatus
+        self.subscribed_to_builders = []  # Builders to which we're subscribed
+        self.subscribed_to = []  # everything else we're subscribed to
 
     def __getstate__(self):
         d = self.__dict__.copy()
@@ -374,7 +410,7 @@ class StatusClientPerspective(base.StatusReceiverPerspective):
         return d
 
     def attached(self, mind):
-        #twlog.msg("StatusClientPerspective.attached")
+        # twlog.msg("StatusClientPerspective.attached")
         return self
 
     def detached(self, mind):
@@ -399,7 +435,7 @@ class StatusClientPerspective(base.StatusReceiverPerspective):
         'steps': all those plus buildETAUpdate, stepStarted, stepFinished
         'logs': all those plus stepETAUpdate, logStarted, logFinished
         'full': all those plus logChunk (with the log contents)
-        
+
 
         Messages are defined by buildbot.interfaces.IStatusReceiver .
         'interval' is used to specify how frequently ETAUpdate messages
@@ -431,6 +467,7 @@ class StatusClientPerspective(base.StatusReceiverPerspective):
         """This returns tuples of (buildset, bsid), because that is much more
         convenient for tryclient."""
         d = self.status.getBuildSets()
+
         def make_remotes(buildsets):
             return [(IRemote(s), s.id) for s in buildsets]
         d.addCallback(make_remotes)
@@ -555,6 +592,7 @@ class StatusClientPerspective(base.StatusReceiverPerspective):
 
 
 class PBListener(base.StatusReceiverMultiService):
+
     """I am a listener for PB-based status clients."""
 
     compare_attrs = ["port", "cred"]
@@ -562,7 +600,7 @@ class PBListener(base.StatusReceiverMultiService):
 
     def __init__(self, port, user="statusClient", passwd="clientpw"):
         base.StatusReceiverMultiService.__init__(self)
-        if type(port) is int:
+        if isinstance(port, int):
             port = "tcp:%d" % port
         self.port = port
         self.cred = (user, passwd)
@@ -581,6 +619,6 @@ class PBListener(base.StatusReceiverMultiService):
     def requestAvatar(self, avatarID, mind, interface):
         assert interface == pb.IPerspective
         p = StatusClientPerspective(self.status)
-        p.attached(mind) # perhaps .callLater(0) ?
+        p.attached(mind)  # perhaps .callLater(0) ?
         return (pb.IPerspective, p,
-                lambda p=p,mind=mind: p.detached(mind))
+                lambda p=p, mind=mind: p.detached(mind))

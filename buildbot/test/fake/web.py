@@ -13,12 +13,15 @@
 #
 # Copyright Buildbot Team Members
 
+from StringIO import StringIO
 from mock import Mock
 
 from twisted.internet import defer
 from twisted.web import server
 
+
 class FakeRequest(Mock):
+
     """
     A fake Twisted Web Request object, including some pointers to the
     buildmaster and an addChange method on that master which will append its
@@ -30,15 +33,17 @@ class FakeRequest(Mock):
     redirected_to = None
     failure = None
 
-    def __init__(self, args={}):
+    def __init__(self, args={}, content=''):
         Mock.__init__(self)
 
         self.args = args
+        self.content = StringIO(content)
         self.site = Mock()
         self.site.buildbot_service = Mock()
         master = self.site.buildbot_service.master = Mock()
 
         self.addedChanges = []
+
         def addChange(**kwargs):
             self.addedChanges.append(kwargs)
             return defer.succeed(Mock())
@@ -65,12 +70,12 @@ class FakeRequest(Mock):
 
     # cribed from twisted.web.test._util._render
     def test_render(self, resource):
-          result = resource.render(self)
-          if isinstance(result, str):
-              self.write(result)
-              self.finish()
-              return self.deferred
-          elif result is server.NOT_DONE_YET:
-              return self.deferred
-          else:
-              raise ValueError("Unexpected return value: %r" % (result,))
+        result = resource.render(self)
+        if isinstance(result, str):
+            self.write(result)
+            self.finish()
+            return self.deferred
+        elif result is server.NOT_DONE_YET:
+            return self.deferred
+        else:
+            raise ValueError("Unexpected return value: %r" % (result,))

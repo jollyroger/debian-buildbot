@@ -14,14 +14,15 @@
     {% endif %}
     <title>{{ pageTitle|e }}</title>
     <link rel="stylesheet" href="{{ stylesheet }}" type="text/css" />
-    <link rel="alternate" type="application/rss+xml" title="RSS" href="{{ path_to_root }}rss">
-    <link rel="shortcut icon" href="{{ path_to_root }}favicon.ico">
+    <link rel="alternate" type="application/rss+xml" title="RSS" href="{{ path_to_root }}rss" />
+    <link rel="shortcut icon" href="{{ path_to_root }}favicon.ico" />
     {% endblock %}
   </head>
   <body class="interface">
     {% block header -%}
     <div class="header">    
         <a href="{{ path_to_root or '.' }}">Home</a>
+        {% if authz.advertiseAction('view', request) %}
         - <a href="{{ path_to_root }}waterfall">Waterfall</a>
         <a href="{{ path_to_root }}grid">Grid</a>
         <a href="{{ path_to_root }}tgrid">T-Grid</a>
@@ -35,6 +36,7 @@
         {% endif %}
         - <a href="{{ path_to_root }}json/help">JSON API</a>
         - <a href="{{ path_to_root }}about">About</a>
+        {% endif %}
     <div class="auth">    
     {% if authz.authenticated(request) %}
     {{ authz.getUsernameHTML(request) }}
@@ -43,8 +45,8 @@
     <a href="{{ authz.httpLoginUrl }}">Login</a>
     {% elif authz.auth %}
     <form method="post" name="login" action="{{ path_to_root }}login">
-    <input type="text" name="username" size=10 />
-    <input type="password" name="passwd" size=10 />
+    <input type="text" name="username" size="10" />
+    <input type="password" name="passwd" size="10" />
     <input type="submit" value="login" />
     </form>
     {% endif %}

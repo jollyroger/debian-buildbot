@@ -1,0 +1,29 @@
+Description: sphinx doesn't seem to support relative paths for logos anymore
+Author: "Dustin J. Mitchell" <dustin@mozilla.com>
+Origin: upstream, https://github.com/buildbot/buildbot/commit/a655a504309db8584ae582065fe27548a16c3dd3.patch
+Bug-Debian: http://bugs.debian.org/737315
+Date: Thu, 23 Jan 2014 16:32:25 -0500
+Last-Update: 2014-03-17
+
+Index: b/docs/conf.py
+===================================================================
+--- a/docs/conf.py
++++ b/docs/conf.py
+@@ -131,7 +131,7 @@ html_theme = 'agogo'
+ 
+ # The name of an image file (relative to this directory) to place at the top
+ # of the sidebar.
+-html_logo = os.path.join('_images', 'header-text-transparent.png')
++html_logo = 'header-text-transparent.png'
+ 
+ # The name of an image file (within the static path) to use as favicon of the
+ # docs.  This file should be a Windows icon file (.ico) being 16x16 or 32x32
+@@ -205,7 +205,7 @@ latex_documents = [
+ 
+ # The name of an image file (relative to this directory) to place at the top of
+ # the title page.
+-latex_logo = os.path.join('_images', 'header-text-transparent.png')
++latex_logo = 'header-text-transparent.png'
+ 
+ # For "manual" documents, if this is true, then toplevel headings are parts,
+ # not chapters.

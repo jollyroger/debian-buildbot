@@ -4,6 +4,10 @@
 Schedulers
 ----------
 
+.. contents::
+    :depth: 1
+    :local:
+
 Schedulers are responsible for initiating builds on builders.
 
 Some schedulers listen for changes from ChangeSources and generate build sets
@@ -106,6 +110,14 @@ available with all schedulers.
     ``False`` and only applies when ``fileIsImportant`` is
     given.
 
+``reason``
+    A string that will be used as the reason for the triggered build.
+
+``createAbsoluteSourceStamps``
+    This option only has effect when using multiple codebases. When ``True``, it
+    uses the last seen revision for each codebase that does not have a change.
+    When ``False``, the default value, codebases without changes will use the
+    revision from the ``codebases`` argument.
 
 The remaining subsections represent a catalog of the available Scheduler types.
 All these Schedulers are defined in modules under :mod:`buildbot.schedulers`,
@@ -230,6 +242,10 @@ The arguments to this scheduler are:
 ``change_filter``
 
 ``onlyImportant``
+
+``reason``
+
+``createAbsoluteSourceStamps``
     See :ref:`Configuring-Schedulers`.
 
 ``treeStableTimer``
@@ -315,6 +331,8 @@ The arguments to this scheduler are:
 ``change_filter``
 
 ``onlyImportant``
+
+``reason``
     See :ref:`Configuring-Schedulers`.
 
 ``treeStableTimer``
@@ -411,6 +429,9 @@ The arguments to this scheduler are:
 
 ``onlyImportant``
 
+``reason``
+    See :ref:`Configuring-Schedulers`.
+
 ``periodicBuildTimer``
     The time, in seconds, after which to start a build.
 
@@ -464,10 +485,14 @@ The full list of parameters is:
 
 ``onlyImportant``
 
+``reason``
+
 ``codebases``
-    See :ref:`Configuring-Schedulers`.  Note that ``fileIsImportant`` and
-    ``change_filter`` are only relevant if ``onlyIfChanged`` is
-    ``True``.
+
+``createAbsoluteSourceStamps``
+    See :ref:`Configuring-Schedulers`.  Note that ``fileIsImportant``,
+    ``change_filter`` and ``createAbsoluteSourceStamps`` are only relevant
+    if ``onlyIfChanged`` is ``True``.
 
 ``onlyIfChanged``
     If this is true, then builds will not be scheduled at the designated time
@@ -854,6 +879,12 @@ The scheduler takes the following parameters:
     A :ref:`parameter <ForceScheduler-Parameters>` specifying the reason for
     the build.  The default value is a string parameter with value "force build".
 
+``reasonString``
+
+    A string that will be used to create the build reason for the forced build. This
+    string can contain the placeholders '%(owner)s' and '%(reason)s', which represents
+    the value typed into the reason field.
+
 ``username``
 
     A :ref:`parameter <ForceScheduler-Parameters>` specifying the project for
@@ -870,6 +901,11 @@ The scheduler takes the following parameters:
     property.  These can be arbitrary parameters, where the parameter's name is
     taken as the property name, or ``AnyPropertyParameter``, which allows the
     web user to specify the property name.
+
+``buttonName``
+
+    The name of the "submit" button on the resulting force-build form.
+    This defaults to "Force Build".
 
 An example may be better than long explanation.  What you need in your config
 file is something like::
@@ -1117,7 +1153,6 @@ Example::
             choices = [ "test_builder1",
                         "test_builder2",
                         "test_builder3" ])
-        ])
 
         # .. and later base the schedulers to trigger off this property:
 
@@ -1193,15 +1228,16 @@ Example::
                 builds.append(builder+"/"+str(b.getNumber()))
         return builds
 
-        # ...
+    # ...
 
-            properties=[
-                InheritBuildParameter(
-                    name="inherit",
-                    label="promote a build for merge",
-                    compatible_builds=get_compatible_builds,
-                    required = True),
-                    ])
+    sched = Scheduler(...,
+        properties=[
+            InheritBuildParameter(
+                name="inherit",
+                label="promote a build for merge",
+                compatible_builds=get_compatible_builds,
+                required = True),
+                ])
 
 .. bb:sched:: BuildslaveChoiceParameter
 
@@ -1218,18 +1254,18 @@ Example::
     from buildbot.process.builder import enforceChosenSlave
 
     # schedulers:
-        ForceScheduler(
-          # ...
-          properties=[
+    ForceScheduler(
+        # ...
+        properties=[
             BuildslaveChoiceParameter(),
-          ]
-        )
+        ]
+    )
 
     # builders:
-        BuilderConfig(
-          # ...
-          canStartBuild=enforceChosenSlave,
-        )
+    BuilderConfig(
+        # ...
+        canStartBuild=enforceChosenSlave,
+    )
 
 AnyPropertyParameter
 ####################

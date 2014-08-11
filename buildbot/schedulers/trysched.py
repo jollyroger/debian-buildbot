@@ -16,16 +16,16 @@
 import os
 
 from twisted.internet import defer
-from twisted.python import log
 from twisted.protocols import basic
+from twisted.python import log
 
 from buildbot import pbutil
-from buildbot.util.maildir import MaildirService
-from buildbot.util import json
-from buildbot.util import netstrings
 from buildbot.process.properties import Properties
 from buildbot.schedulers import base
 from buildbot.status.buildset import BuildSetStatus
+from buildbot.util import json
+from buildbot.util import netstrings
+from buildbot.util.maildir import MaildirService
 
 
 class TryBase(base.BaseScheduler):
@@ -69,7 +69,7 @@ class JobdirService(MaildirService):
 
 class Try_Jobdir(TryBase):
 
-    compare_attrs = TryBase.compare_attrs + ('jobdir',)
+    compare_attrs = ('jobdir',)
 
     def __init__(self, name, builderNames, jobdir,
                  properties={}):
@@ -110,10 +110,10 @@ class Try_Jobdir(TryBase):
         #  builderNames: list of builder names
         #  properties: dict of build properties
         p = netstrings.NetstringParser()
-        f.seek(0,2)
+        f.seek(0, 2)
         if f.tell() > basic.NetstringReceiver.MAX_LENGTH:
             raise BadJobfile("The patch size is greater that NetStringReceiver.MAX_LENGTH. Please Set this higher in the master.cfg")
-        f.seek(0,0)
+        f.seek(0, 0)
         try:
             p.feed(f.read())
         except basic.NetstringParseError:
@@ -159,6 +159,7 @@ class Try_Jobdir(TryBase):
             raise BadJobfile("unknown version '%s'" % ver)
         return parsed_job
 
+    @defer.inlineCallbacks
     def handleJobFile(self, filename, f):
         try:
             parsed_job = self.parseJob(f)
@@ -166,14 +167,16 @@ class Try_Jobdir(TryBase):
         except BadJobfile:
             log.msg("%s reports a bad jobfile in %s" % (self, filename))
             log.err()
-            return defer.succeed(None)
+            defer.returnValue(None)
+            return
 
         # Validate/fixup the builder names.
         builderNames = self.filterBuilderList(builderNames)
         if not builderNames:
             log.msg(
                 "incoming Try job did not specify any allowed builder names")
-            return defer.succeed(None)
+            defer.returnValue(None)
+            return
 
         who = ""
         if parsed_job['who']:
@@ -183,40 +186,36 @@ class Try_Jobdir(TryBase):
         if parsed_job['comment']:
             comment = parsed_job['comment']
 
-        d = self.master.db.sourcestampsets.addSourceStampSet()
+        setid = yield self.master.db.sourcestampsets.addSourceStampSet()
+        yield self.master.db.sourcestamps.addSourceStamp(
+            sourcestampsetid=setid,
+            branch=parsed_job['branch'],
+            revision=parsed_job['baserev'],
+            patch_body=parsed_job['patch_body'],
+            patch_level=parsed_job['patch_level'],
+            patch_author=who,
+            patch_comment=comment,
+            patch_subdir='',  # TODO: can't set this remotely - #1769
+            project=parsed_job['project'],
+            repository=parsed_job['repository'])
 
-        def addsourcestamp(setid):
-            self.master.db.sourcestamps.addSourceStamp(
-                sourcestampsetid=setid,
-                branch=parsed_job['branch'],
-                revision=parsed_job['baserev'],
-                patch_body=parsed_job['patch_body'],
-                patch_level=parsed_job['patch_level'],
-                patch_author=who,
-                patch_comment=comment,
-                patch_subdir='',  # TODO: can't set this remotely - #1769
-                project=parsed_job['project'],
-                repository=parsed_job['repository'])
-            return setid
-
-        d.addCallback(addsourcestamp)
-
-        def create_buildset(setid):
-            reason = "'try' job"
-            if parsed_job['who']:
-                reason += " by user %s" % parsed_job['who']
-            properties = parsed_job['properties']
-            requested_props = Properties()
-            requested_props.update(properties, "try build")
-            return self.addBuildsetForSourceStamp(
-                ssid=None, setid=setid,
-                reason=reason, external_idstring=parsed_job['jobid'],
-                builderNames=builderNames, properties=requested_props)
-        d.addCallback(create_buildset)
-        return d
+        reason = "'try' job"
+        if parsed_job['who']:
+            reason += " by user %s" % parsed_job['who']
+        properties = parsed_job['properties']
+        requested_props = Properties()
+        requested_props.update(properties, "try build")
+        bsid, brids = yield self.addBuildsetForSourceStamp(
+            ssid=None, setid=setid,
+            reason=reason,
+            external_idstring=parsed_job['jobid'],
+            builderNames=builderNames,
+            properties=requested_props)
+        defer.returnValue((bsid, brids))
 
 
 class Try_Userpass_Perspective(pbutil.NewCredPerspective):
+
     def __init__(self, scheduler, username):
         self.scheduler = scheduler
         self.username = username
@@ -247,15 +246,15 @@ class Try_Userpass_Perspective(pbutil.NewCredPerspective):
             branch=branch, revision=revision, repository=repository,
             project=project, patch_level=patch[0], patch_body=patch[1],
             patch_subdir='', patch_author=who or '',
-            patch_comment=comment or '',
+            patch_comment=comment or '', codebase='',
             sourcestampsetid=sourcestampsetid)
                     # note: no way to specify patch subdir - #1769
 
         requested_props = Properties()
         requested_props.update(properties, "try build")
         (bsid, brids) = yield self.scheduler.addBuildsetForSourceStamp(
-                setid=sourcestampsetid, reason=reason,
-                properties=requested_props, builderNames=builderNames)
+            setid=sourcestampsetid, reason=reason,
+            properties=requested_props, builderNames=builderNames)
 
         # return a remotely-usable BuildSetStatus object
         bsdict = yield db.buildsets.getBuildset(bsid)
@@ -281,6 +280,7 @@ class Try_Userpass(TryBase):
                          properties=properties)
         self.port = port
         self.userpass = userpass
+        self.registrations = []
 
     def startService(self):
         TryBase.startService(self)
@@ -288,7 +288,6 @@ class Try_Userpass(TryBase):
         # register each user/passwd with the pbmanager
         def factory(mind, username):
             return Try_Userpass_Perspective(self, username)
-        self.registrations = []
         for user, passwd in self.userpass:
             self.registrations.append(
                 self.master.pbmanager.register(
