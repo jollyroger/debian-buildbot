@@ -1,0 +1,48 @@
+Description: Add possibility to operate a single salve from init script
+Author: Brice Goglin <bgoglin@debian.org>
+Reviewed-by: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Forwarded: https://github.com/buildbot/buildbot/pull/1267
+Origin: other, https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=661102
+Bug-Debian: http://bugs.debian.org/661102
+Date: Fri, 24 Feb 2012 09:11:27 +0100
+Last-Update: 2014-10-19
+
+Index: debian-buildbot/contrib/init-scripts/buildmaster.init.sh
+===================================================================
+--- debian-buildbot.orig/contrib/init-scripts/buildmaster.init.sh
++++ debian-buildbot/contrib/init-scripts/buildmaster.init.sh
+@@ -116,7 +116,9 @@ function master_op () {
+ function do_op () {
+     errors=0
+     for i in $( seq ${#MASTER_ENABLED[@]} ); do
+-        if is_disabled "${MASTER_ENABLED[$i]}" ; then
++        if [ -n "$4" ] && [ "$4" != "${MASTER_NAME[$i]}" ] ; then
++            continue
++        elif is_disabled "${MASTER_ENABLED[$i]}" && [ -z "$4" ] ; then
+             continue
+         fi
+ 
+@@ -143,19 +145,19 @@ function do_op () {
+ 
+ case "$1" in
+     start)
+-        do_op "master_op" "start" "Starting buildmaster"
++        do_op "master_op" "start" "Starting buildmaster" "$2"
+         exit $?
+         ;;
+     stop)
+-        do_op "master_op" "stop" "Stopping buildmaster"
++        do_op "master_op" "stop" "Stopping buildmaster" "$2"
+         exit $?
+         ;;
+     reload)
+-        do_op "master_op" "reconfig" "Reloading buildmaster"
++        do_op "master_op" "reconfig" "Reloading buildmaster" "$2"
+         exit $?
+         ;;
+     restart|force-reload)
+-        do_op "master_op" "restart" "Restarting buildmaster"
++        do_op "master_op" "restart" "Restarting buildmaster" "$2"
+         exit $?
+         ;;
+     *)
