@@ -152,9 +152,8 @@ RemoteCommand
         ``logfileName`` must match the name given by the slave in any ``log``
         updates.
 
-    .. py:method:: useLogDelayed(log, logfileName, activateCallback, closeWhenFinished=False)
+    .. py:method:: useLogDelayed(logfileName, activateCallback, closeWhenFinished=False)
 
-        :param log: the :class:`~buildbot.status.logfile.LogFile` instance to add to.
         :param logfileName: the name of the logfile, as given to the slave.
             This is ``stdio`` for standard streams.
         :param activateCallback: callback for when the log is added; see below
@@ -196,7 +195,7 @@ RemoteCommand
 
     Add data to a logfile other than ``stdio``.
 
-.. py:class:: RemoteShellCommand(workdir, command, env=None, want_stdout=True, want_stderr=True, timeout=20*60, maxTime=None, logfiles={}, usePTY="slave-config", logEnviron=True, collectStdio=False)
+.. py:class:: RemoteShellCommand(workdir, command, env=None, want_stdout=True, want_stderr=True, timeout=20*60, maxTime=None, sigtermTime=None, logfiles={}, usePTY="slave-config", logEnviron=True, collectStdio=False)
 
     :param workdir: directory in which command should be executed, relative to
         the builder's basedir.
@@ -207,6 +206,7 @@ RemoteCommand
     :param timeout: Maximum time without output before the command is killed.
     :param maxTime: Maximum overall time from the start before the command is
         killed.
+    :param sigtermTime: Try to kill the command with SIGTERM and wait for sigtermTime seconds before firing SIGKILL. If None, SIGTERM will not be fired.
     :param env: A dictionary of environment variables to augment or replace the
         existing environment on the slave.
     :param logfiles: Additional logfiles to request from the slave.
@@ -218,6 +218,10 @@ RemoteCommand
     Most of the constructor arguments are sent directly to the slave; see
     :ref:`shell-command-args` for the details of the formats.  The
     ``collectStdout`` parameter is as described for the parent class.
+
+    If shell command contains passwords they can be hidden from log files by passing
+    them as tuple in command argument. Eg. ``['print', ('obfuscated', 'password', 'dummytext')]``
+    is logged as ``['print', 'dummytext']``.
 
     This class is used by the :bb:step:`ShellCommand` step, and by steps that
     run multiple customized shell commands.

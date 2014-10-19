@@ -15,14 +15,18 @@
 
 from __future__ import with_statement
 
+import cPickle
 import os
 import shutil
-import cPickle
+
 from buildbot.test.util import db
 
-from buildbot.changes.changes import Change, OldChangeMaster
+from buildbot.changes.changes import Change
+from buildbot.changes.changes import OldChangeMaster
+
 
 class ChangeImportMixin(db.RealDatabaseMixin):
+
     """
     We have a number of tests that examine the results of importing particular
     flavors of Change objects.  This class uses some pickling to make this easy
@@ -30,9 +34,12 @@ class ChangeImportMixin(db.RealDatabaseMixin):
 
     This is a subclass of RealDatabaseMixin, so do not inherit from that class
     separately!
-
-    >>> self.make_pickle(self.make_change(who=u'jimmy'), self.make_change(who='johnny'))
     """
+
+    # on postgres, at least, many of these tests can take longer than the default
+    # 120s (!!)
+    timeout = 240
+
     def make_pickle(self, *changes, **kwargs):
         recode_fn = kwargs.pop('recode_fn', None)
         cm = OldChangeMaster()
@@ -55,6 +62,7 @@ class ChangeImportMixin(db.RealDatabaseMixin):
 
     def tearDownChangeImport(self):
         d = self.tearDownRealDatabase()
+
         def rmtree(_):
             if os.path.exists(self.basedir):
                 shutil.rmtree(self.basedir)

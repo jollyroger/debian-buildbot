@@ -1,21 +1,23 @@
-Release Notes for Buildbot |version|
-====================================
+Release Notes for Buildbot v0.8.8
+=================================
 
 ..
     Any change that adds a feature or fixes a bug should have an entry here.
     Most simply need an additional bulleted list item, but more significant
     changes can be given a subsection of their own.
 
-The following are the release notes for Buildbot |version|.
-
-* The ``MasterShellCommand`` step now correctly handles environment variables passed as list.
-* The master now poll the database for pending tasks when running buildbot in multi-master mode.
+The following are the release notes for Buildbot v0.8.8
+Buildbot v0.8.8 was released on August 22, 2013
 
 Master
 ------
 
 Features
 ~~~~~~~~
+* The ``MasterShellCommand`` step now correctly handles environment variables passed as list.
+
+* The master now poll the database for pending tasks when running buildbot in multi-master mode.
+
 
 * The algorithm to match build requests to slaves has been rewritten in :bb:pull:`615`.
   The new algorithm automatically takes locks into account, and will not schedule a build only to have it wait on a lock.
@@ -75,6 +77,8 @@ Features
 
 * GNUAutoconf and other pre-defined factories now work correctly (:bb:bug:`2402`)
 
+* The pubDate in RSS feeds is now rendered correctly (:bb:bug:`2530`)
+
 Deprecations, Removals, and Non-Compatible Changes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -110,6 +114,7 @@ Changes for Developers
 ~~~~~~~~~~~~~~~~~~~~~~
 
 * Added an optional build start callback to ``buildbot.status.status_gerrit.GerritStatusPush``
+  This release includes the fix for :bb:bug:`2536`.
 
 * An optional ``startCB`` callback to :bb:status:`GerritStatusPush` can be used
   to send a message back to the committer.
@@ -137,7 +142,9 @@ Details
 -------
 
 For a more detailed description of the changes made in this version, see the
-git log itself::
+git log itself:
+
+.. code-block:: none
 
    git log v0.8.7..v0.8.8
 

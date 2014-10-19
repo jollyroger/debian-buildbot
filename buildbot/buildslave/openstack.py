@@ -16,11 +16,13 @@
 
 import time
 
-from twisted.internet import defer, threads
+from twisted.internet import defer
+from twisted.internet import threads
 from twisted.python import log
 
+from buildbot import config
+from buildbot import interfaces
 from buildbot.buildslave.base import AbstractLatentBuildSlave
-from buildbot import config, interfaces
 
 try:
     import novaclient.exceptions as nce
@@ -36,10 +38,11 @@ BUILD = 'BUILD'
 DELETED = 'DELETED'
 UNKNOWN = 'UNKNOWN'
 
+
 class OpenStackLatentBuildSlave(AbstractLatentBuildSlave):
 
     instance = None
-    _poll_resolution = 5 # hook point for tests
+    _poll_resolution = 5  # hook point for tests
 
     def __init__(self, name, password,
                  flavor,
@@ -49,8 +52,8 @@ class OpenStackLatentBuildSlave(AbstractLatentBuildSlave):
                  os_tenant_name,
                  os_auth_url,
                  meta=None,
-                 max_builds=None, notify_on_missing=[], missing_timeout=60*20,
-                 build_wait_timeout=60*10, properties={}, locks=None):
+                 max_builds=None, notify_on_missing=[], missing_timeout=60 * 20,
+                 build_wait_timeout=60 * 10, properties={}, locks=None):
 
         if not client or not nce:
             config.error("The python module 'novaclient' is needed  "
@@ -91,43 +94,44 @@ class OpenStackLatentBuildSlave(AbstractLatentBuildSlave):
         boot_kwargs = {}
         if self.meta is not None:
             boot_kwargs['meta'] = self.meta
-        self.instance = os_client.servers.create(*boot_args, **boot_kwargs)
+        instance = os_client.servers.create(*boot_args, **boot_kwargs)
+        self.instance = instance
         log.msg('%s %s starting instance %s (image %s)' %
-                (self.__class__.__name__, self.slavename, self.instance.id,
+                (self.__class__.__name__, self.slavename, instance.id,
                  image_uuid))
         duration = 0
         interval = self._poll_resolution
-        inst = self.instance
-        while inst.status == BUILD:
+        inst = instance
+        while inst.status.startswith(BUILD):
             time.sleep(interval)
             duration += interval
             if duration % 60 == 0:
                 log.msg('%s %s has waited %d minutes for instance %s' %
-                        (self.__class__.__name__, self.slavename, duration//60,
-                         self.instance.id))
+                        (self.__class__.__name__, self.slavename, duration // 60,
+                         instance.id))
             try:
-                inst = os_client.servers.get(self.instance.id)
+                inst = os_client.servers.get(instance.id)
             except nce.NotFound:
                 log.msg('%s %s instance %s (%s) went missing' %
                         (self.__class__.__name__, self.slavename,
-                         self.instance.id, self.instance.name))
+                         instance.id, instance.name))
                 raise interfaces.LatentBuildSlaveFailedToSubstantiate(
-                    self.instance.id, self.instance.status)
+                    instance.id, instance.status)
         if inst.status == ACTIVE:
-            minutes = duration//60
-            seconds = duration%60
+            minutes = duration // 60
+            seconds = duration % 60
             log.msg('%s %s instance %s (%s) started '
                     'in about %d minutes %d seconds' %
                     (self.__class__.__name__, self.slavename,
-                     self.instance.id, self.instance.name, minutes, seconds))
-            return [self.instance.id, image_uuid,
-                    '%02d:%02d:%02d' % (minutes//60, minutes%60, seconds)]
+                     instance.id, instance.name, minutes, seconds))
+            return [instance.id, image_uuid,
+                    '%02d:%02d:%02d' % (minutes // 60, minutes % 60, seconds)]
         else:
             log.msg('%s %s failed to start instance %s (%s)' %
                     (self.__class__.__name__, self.slavename,
-                     self.instance.id, inst.status))
+                     instance.id, inst.status))
             raise interfaces.LatentBuildSlaveFailedToSubstantiate(
-                self.instance.id, self.instance.status)
+                instance.id, inst.status)
 
     def stop_instance(self, fast=False):
         if self.instance is None:
@@ -137,7 +141,7 @@ class OpenStackLatentBuildSlave(AbstractLatentBuildSlave):
             return defer.succeed(None)
         instance = self.instance
         self.instance = None
-        return threads.deferToThread(self._stop_instance, instance, fast)
+        self._stop_instance(instance, fast)
 
     def _stop_instance(self, instance, fast):
         # Authenticate to OpenStack. This is needed since it seems the update
@@ -159,25 +163,3 @@ class OpenStackLatentBuildSlave(AbstractLatentBuildSlave):
             log.msg('%s %s terminating instance %s (%s)' %
                     (self.__class__.__name__, self.slavename, instance.id,
                      instance.name))
-        duration = 0
-        interval = self._poll_resolution
-        if fast:
-            goal = (DELETED, UNKNOWN)
-        else:
-            goal = (DELETED,)
-        while inst.status not in goal:
-            time.sleep(interval)
-            duration += interval
-            if duration % 60 == 0:
-                log.msg(
-                    '%s %s has waited %d minutes for instance %s to end' %
-                    (self.__class__.__name__, self.slavename, duration//60,
-                     instance.id))
-            try:
-                inst = os_client.servers.get(instance.id)
-            except nce.NotFound:
-                break
-        log.msg('%s %s instance %s %s '
-                'after about %d minutes %d seconds' %
-                (self.__class__.__name__, self.slavename,
-                 instance.id, goal, duration//60, duration%60))

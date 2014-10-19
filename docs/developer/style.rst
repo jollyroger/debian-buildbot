@@ -4,15 +4,26 @@ Buildbot Coding Style
 Symbol Names
 ------------
 
-Buildbot follows `PEP8 <http://www.python.org/dev/peps/pep-0008/>`_ regarding
-the formatting of symbol names.
+Buildbot follows `PEP8 <http://www.python.org/dev/peps/pep-0008/>`_ regarding the formatting of symbol names.
+Because Buildbot uses Twisted so heavily, and Twisted uses interCaps, this is not very consistently applied throughout the codebase.
 
-The single exception in naming of functions and methods. Because Buildbot uses
-Twisted so heavily, and Twisted uses interCaps, Buildbot methods should do the
-same. That is, you should spell methods and functions with the first character
-in lower-case, and the first letter of subsequent words capitalized, e.g.,
-``compareToOther`` or ``getChangesGreaterThan``. This point is not applied very
-consistently in Buildbot, but let's try to be consistent in new code. 
+The single exception to PEP8 is in naming of functions and methods.
+That is, you should spell methods and functions with the first character in lower-case, and the first letter of subsequent words capitalized, e.g., ``compareToOther`` or ``getChangesGreaterThan``.
+
+Symbols used as parameters to functions used in configuration files should use underscores.
+
+In summary, then:
+
+================== ============
+Symbol Type        Format
+================== ============
+Methods            interCaps
+Functions          interCaps
+Function Arguments under_scores
+Classes            InitialCaps
+Variables          under_scores
+Constants          ALL_CAPS
+================== ============
 
 Twisted Idioms
 --------------
@@ -63,7 +74,7 @@ First, an admonition: do not create extra class methods that represent the conti
         d = ...
         d.addCallback(self._myMethod_2) # BAD!
     def _myMethod_2(self, res):         # BAD!
-        # ...
+        ...
 
 Invariably, this extra method gets separated from its parent as the code
 evolves, and the result is completely unreadable. Instead, include all of the
@@ -181,7 +192,7 @@ use a `DeferredList <http://twistedmatrix.com/documents/current/api/twisted.inte
             return res.strip()
         rev_parse_d.addCallback(parse_rev_parse)
 
-        log_d = utils.getProcessOutput(git, [ 'log', '-1', '--format=%s%n%b', results['rev'] ]))
+        log_d = utils.getProcessOutput(git, [ 'log', '-1', '--format=%s%n%b', results['rev'] ])
         def parse_log(res):
             return res.strip()
         log_d.addCallback(parse_log)

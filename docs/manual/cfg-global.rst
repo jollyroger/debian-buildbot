@@ -3,6 +3,10 @@ Global Configuration
 
 The keys in this section affect the operations of the buildmaster globally.
 
+.. contents::
+    :depth: 1
+    :local:
+
 .. bb:cfg:: db
 .. bb:cfg:: db_url
 .. bb:cfg:: db_poll_interval
@@ -27,7 +31,7 @@ All keys are optional::
 The ``db_url`` key indicates the database engine to use.
 The format of this parameter is completely documented at http://www.sqlalchemy.org/docs/dialects/, but is generally of the form::
 
-     driver://[username:password@]host:port/database[?args]
+     "driver://[username:password@]host:port/database[?args]"
 
 The optional ``db_poll_interval`` specifies the interval, in seconds, between checks for pending tasks in the database.
 This parameter is generally only useful in multi-master mode. See :ref:`Multi-master-mode`.
@@ -75,13 +79,6 @@ MySQL defaults to the MyISAM storage engine, but this can be overridden with the
 
 Note that, because of InnoDB's extremely short key length limitations, it cannot be used to run Buildbot.
 See http://bugs.mysql.com/bug.php?id=4541 for more information.
-
-Buildbot uses temporary tables internally to manage large transactions.
-
-MySQL has trouble doing replication with temporary tables, so if you are using a replicated MySQL installation, you may need to handle this situation carefully.
-The MySQL documentation (http://dev.mysql.com/doc/refman/5.5/en/replication-features-temptables.html) recommends using ``--replicate-wild-ignore-table`` to ignore temporary
-tables that should not be replicated.
-All Buildbot temporary tables begin with ``bbtmp_``, so an option such as ``--replicate-wild-ignore-table=bbtmp_.*`` may help.
 
 .. index:: Postgres
 
@@ -328,7 +325,7 @@ Prioritizing Builders
 .. code-block:: python
 
    def prioritizeBuilders(buildmaster, builders):
-       # ...
+       ...
    c['prioritizeBuilders'] = prioritizeBuilders
 
 By default, buildbot will attempt to start builds on builders in order, beginning with the builder with the oldest pending request.
@@ -339,7 +336,7 @@ This parameter controls the order that the build master can start builds, and is
 It does not affect the order in which a builder processes the build requests in its queue.
 For that purpose, see :ref:`Prioritizing-Builds`.
 
-.. bb:cfg:: slavePortnum
+.. bb:cfg:: protocols
 
 .. _Setting-the-PB-Port-for-Slaves:
 
@@ -348,7 +345,7 @@ Setting the PB Port for Slaves
 
 ::
 
-    c['slavePortnum'] = 10000
+    c['protocols'] = {"pb": {"port": 10000}}
 
 The buildmaster will listen on a TCP port of your choosing for connections from buildslaves.
 It can also use this port for connections from remote Change Sources, status clients, and debug tools.
@@ -357,15 +354,18 @@ This port should be visible to the outside world, and you'll need to tell your b
 It does not matter which port you pick, as long it is externally visible; however, you should probably use something larger than 1024, since most operating systems don't allow non-root processes to bind to low-numbered ports.
 If your buildmaster is behind a firewall or a NAT box of some sort, you may have to configure your firewall to permit inbound connections to this port.
 
-:bb:cfg:`slavePortnum` is a *strports* specification string, defined in the ``twisted.application.strports`` module (try ``pydoc twisted.application.strports`` to get documentation on the format).
+``c['protocols']['pb']['port']`` is a *strports* specification string, defined in the ``twisted.application.strports`` module (try ``pydoc twisted.application.strports`` to get documentation on the format).
 
 This means that you can have the buildmaster listen on a localhost-only port by doing:
 
 .. code-block:: python
 
-   c['slavePortnum'] = "tcp:10000:interface=127.0.0.1"
+   c['protocols'] = {"pb": {"port": "tcp:10000:interface=127.0.0.1"}}
 
 This might be useful if you only run buildslaves on the same machine, and they are all configured to contact the buildmaster at ``localhost:10000``.
+
+.. note:: In Buildbot versions <=0.8.8 you might see ``slavePortnum`` option.
+   This option contains same value as ``c['protocols']['pb']['port']`` but not recomended to use.
 
 .. index:: Properties; global
 
@@ -393,7 +393,7 @@ Debug Options
 If you set :bb:cfg:`debugPassword`, then you can connect to the buildmaster with the diagnostic tool launched by :samp:`buildbot debugclient {MASTER}:{PORT}`.
 From this tool, you can reload the config file, manually force builds, and inject changes, which may be useful for testing your buildmaster without actually committing changes to your repository (or before you have the Change Sources configured.)
 
-The debug tool uses the same port number as the slaves, :bb:cfg:`slavePortnum`, and you may configure its authentication credentials as follows::
+The debug tool uses the same port number as the slaves, :bb:cfg:`protocols`, and you may configure its authentication credentials as follows::
 
     c['debugPassword'] = "debugpassword"
 
@@ -545,7 +545,7 @@ As shown above, to enable the `buildbot user` tool, you must initialize a `Comma
     This is the `passwd` that will be registered on the PB connection and need to be used when calling `buildbot user`.
 
 ``port``
-    The PB connection `port` must be different than `c['slavePortnum']` and be specified when calling `buildbot user`
+    The PB connection `port` must be different than `c['protocols']['pb']['port']` and be specified when calling `buildbot user`
 
 .. bb:cfg:: validation
 

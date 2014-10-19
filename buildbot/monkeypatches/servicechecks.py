@@ -14,7 +14,7 @@
 # Copyright Buildbot Team Members
 
 
-def patch_servicechecks():
+def patch():
     """
     Patch startService and stopService so that they check the previous state
     first.
@@ -24,11 +24,13 @@ def patch_servicechecks():
     from twisted.application.service import Service
     old_startService = Service.startService
     old_stopService = Service.stopService
+
     def startService(self):
-        assert not self.running
+        assert not self.running, "%r already running" % (self,)
         return old_startService(self)
+
     def stopService(self):
-        assert self.running
+        assert self.running, "%r already stopped" % (self,)
         return old_stopService(self)
     Service.startService = startService
     Service.stopService = stopService

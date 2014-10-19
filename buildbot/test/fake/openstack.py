@@ -25,15 +25,18 @@ UNKNOWN = 'UNKNOWN'
 
 # Parts used from novaclient.v1_1.
 class Client():
+
     def __init__(self, username, password, tenant_name, auth_url):
         self.images = Images()
         self.servers = Servers()
+
 
 class Images():
     images = []
 
     def list(self):
         return self.images
+
 
 class Servers():
     fail_to_get = False
@@ -69,18 +72,21 @@ class Servers():
 
 # This is returned by Servers.create().
 class Instance():
+
     def __init__(self, id, servers, boot_args, boot_kwargs):
         self.id = id
         self.servers = servers
         self.boot_args = boot_args
         self.boot_kwargs = boot_kwargs
         self.gets = 0
-        self.status = BUILD
+        self.status = 'BUILD(networking)'
         self.name = 'name'
 
     def delete(self):
         self.servers.delete(self.id)
 
 # Parts used from novaclient.exceptions.
+
+
 class NotFound():
     pass

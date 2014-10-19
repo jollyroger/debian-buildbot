@@ -33,6 +33,10 @@ The rest of this section describes all the standard :class:`BuildStep` objects
 available for use in a :class:`Build`, and the parameters which can be used to
 control each.  A full list of build steps is available in the :bb:index:`step`.
 
+.. contents::
+    :depth: 2
+    :local:
+
 .. index:: Buildstep Parameter
 
 .. _Buildstep-Common-Parameters:
@@ -91,6 +95,53 @@ Arguments common to all :class:`BuildStep` subclasses:
 ``alwaysRun``
     if ``True``, this build step will always be run, even if a previous buildstep
     with ``haltOnFailure=True`` has failed.
+
+.. index:: Buildstep Parameter; description
+
+``description``
+    This will be used to describe the command (on the Waterfall display)
+    while the command is still running. It should be a single
+    imperfect-tense verb, like `compiling` or `testing`. The preferred
+    form is a list of short strings, which allows the HTML
+    displays to create narrower columns by emitting a <br> tag between each
+    word. You may also provide a single string.
+
+.. index:: Buildstep Parameter; descriptionDone
+
+``descriptionDone``
+    This will be used to describe the command once it has finished. A
+    simple noun like `compile` or `tests` should be used. Like
+    ``description``, this may either be a list of short strings or a
+    single string.
+
+    If neither ``description`` nor ``descriptionDone`` are set, the
+    actual command arguments will be used to construct the description.
+    This may be a bit too wide to fit comfortably on the Waterfall
+    display.
+
+    All subclasses of :py:class:`BuildStep` will contain the description
+    attributes. Consequently, you could add a :py:class:`ShellCommand`
+    step like so:
+
+    ::
+
+        from buildbot.steps.shell import ShellCommand
+        f.addStep(ShellCommand(command=["make", "test"],
+                               description=["testing"],
+                               descriptionDone=["tests"]))
+
+.. index:: Buildstep Parameter; descriptionSuffix
+
+``descriptionSuffix``
+    This is an optional suffix appended to the end of the description (ie,
+    after ``description`` and ``descriptionDone``). This can be used to distinguish
+    between build steps that would display the same descriptions in the waterfall.
+    This parameter may be set to list of short strings, a single string, or ``None``.
+
+    For example, a builder might use the ``Compile`` step to build two different
+    codebases. The ``descriptionSuffix`` could be set to `projectFoo` and `projectBar`,
+    respectively for each step, which will result in the full descriptions
+    `compiling projectFoo` and `compiling projectBar` to be shown in the waterfall.
 
 .. index:: Buildstep Parameter; doStepIf
 
@@ -348,15 +399,19 @@ The Git step takes the following arguments:
    (optional): instructs git to attempt shallow clones (``--depth 1``).
    This option can be used only in full builds with clobber method.
 
+``reference``
+   (optional): use the specified string as a path to a reference
+   repository on the local machine. Git will try to grab objects from
+   this path first instead of the main repository, if they exist.
+
 ``progress``
    (optional): passes the (``--progress``) flag to (:command:`git
    fetch`). This solves issues of long fetches being killed due to
    lack of output, but requires Git 1.7.2 or later.
 
 ``retryFetch``
-   (optional): this value defaults to ``False``. In any case if
-   fetch fails buildbot retries to fetch again instead of failing the
-   entire source checkout.
+   (optional): defaults to ``False``.
+   If true, if the ``git fetch`` fails then buildbot retries to fetch again instead of failing the entire source checkout.
 
 ``clobberOnFailure``
    (optional): defaults to ``False``. If a fetch or full clone
@@ -392,7 +447,7 @@ The Git step takes the following arguments:
 
    ``fresh``
       This remove all other files except those tracked by Git. First
-      it does :command:`git clean -d -f -x` then fetch/checkout to a
+      it does :command:`git clean -d -f -f -x` then fetch/checkout to a
       specified revision(if any). This option is equal to update mode
       with ``ignore_ignores=True`` in old steps.
 
@@ -400,7 +455,7 @@ The Git step takes the following arguments:
       All the files which are tracked by Git and listed ignore files
       are not deleted. Remaining all other files will be deleted
       before fetch/checkout. This is equivalent to :command:`git clean
-      -d -f` then fetch. This is equivalent to
+      -d -f -f` then fetch. This is equivalent to
       ``ignore_ignores=False`` in old steps.
 
    ``copy``
@@ -447,7 +502,7 @@ The Git step takes the following arguments:
 ``config``
 
    (optional) A dict of git configuration settings to pass to the remote git commands.
-    
+
 .. bb:step:: SVN
 
 .. _Step-SVN:
@@ -713,7 +768,9 @@ You can specify the client spec in two different ways. You can use the ``p4base`
 ``p4branch``, and (optionally) ``p4extra_views`` to build up the viewspec, or you can utilize
 the ``p4viewspec`` to specify the whole viewspec as a set of tuples.
 
-Using p4viewspec will allow you to add lines such as::
+Using p4viewspec will allow you to add lines such as:
+
+.. code-block:: none
 
     //depot/branch/mybranch/...             //<p4client>/...
     -//depot/branch/mybranch/notthisdir/... //<p4client>/notthisdir/...
@@ -739,12 +796,40 @@ you will receive a configuration error exception.
 
 ``p4viewspec``
     This will override any p4branch, p4base, and/or p4extra_views specified.
-    The viewspec will be an array of tuples as follows
-    ``[('//depot/main/','')]``
+    The viewspec will be an array of tuples as follows::
 
-    yields a viewspec with just
+        [('//depot/main/','')]
 
-    ``//depot/main/... //<p4client>/...``
+    It yields a viewspec with just:
+
+    .. code-block:: none
+
+        //depot/main/... //<p4client>/...
+
+``p4viewspec_suffix``
+    (optional): The ``p4viewspec`` lets you customize the client spec for a builder but, as the
+    previous example shows, it automatically adds ``...`` at the end of each line.
+    If you need to also specify file-level remappings, you can set the ``p4viewspec_suffix``
+    to ``None`` so that nothing is added to your viewspec::
+
+        [('//depot/main/...', '...'),
+         ('-//depot/main/config.xml', 'config.xml'),
+         ('//depot/main/config.vancouver.xml', 'config.xml')]
+
+    It yields a viewspec with:
+
+    .. code-block:: none
+
+        //depot/main/... //<p4client>/...
+        -//depot/main/config.xml //<p4client/main/config.xml
+        //depot/main/config.vancouver.xml //<p4client>/main/config.xml
+
+    Note how, with ``p4viewspec_suffix`` set to ``None``, you need to manually add ``...``
+    where you need it.
+
+``p4client_spec_options``
+    (optional): By default, clients are created with the ``allwrite rmdir`` options. This
+    string lets you change that.
 
 ``p4port``
     (optional): the :samp:`{host}:{port}` string describing how to get to the P4 Depot
@@ -757,7 +842,6 @@ you will receive a configuration error exception.
 ``p4passwd``
     (optional): the Perforce password, used as the :option:`-p` argument to all p4
     commands.
-
 
 ``p4client``
     (optional): The name of the client to use. In ``mode='full'`` and
@@ -772,11 +856,21 @@ you will receive a configuration error exception.
     added directly to the client spec's ``LineEnd`` property.  The default is
     ``local``.
 
+``p4extra_args``
+    (optional): Extra arguments to be added to the P4 command-line for the ``sync``
+    command. So for instance if you want to sync only to populate a Perforce proxy
+    (without actually syncing files to disk), you can do::
+
+        P4(p4extra_args=['-Zproxyload'], ...)
+
+
+
+.. index:: double: Gerrit integration; Repo Build Step
 
 .. bb:step:: Repo
 
 Repo
-+++++++++++++++++
+++++
 
 .. py:class:: buildbot.steps.source.repo.Repo
 
@@ -815,6 +909,11 @@ The Repo step takes the following arguments:
 ``syncAllBranches``
     (optional, defaults to ``False``): renderable boolean to control whether ``repo``
     syncs all branches. i.e. ``repo sync -c``
+
+``depth``
+    (optional, defaults to 0): Depth argument passed to repo init.
+    Specifies the amount of git history to store. A depth of 1 is useful for shallow clones.
+    This can save considerable disk space on very large projects.
 
 ``updateTarballAge``
     (optional, defaults to "one week"):
@@ -867,15 +966,157 @@ for example::
    from buildbot.steps.source.repo import RepoDownloadsFromProperties
    from buildbot.process.properties import FlattenList
 
-   factory.addStep(Repo(manifestUrl='git://mygerrit.org/manifest.git',
+   factory.addStep(Repo(manifestURL='git://mygerrit.org/manifest.git',
                         repoDownloads=FlattenList([RepoDownloadsFromChangeSource(),
                                                    RepoDownloadsFromProperties("repo_downloads")
                                                    ]
                                                   )
                         ))
 
-.. index:: double: Gerrit integration; Repo Build Step
+.. bb:step:: Gerrit
 
+.. _Step-Gerrit:
+
+Gerrit
+++++++
+
+.. py:class:: buildbot.steps.source.gerrit.Gerrit
+
+This Source step is exactly like the :bb:step:`Git` checkout step , except that
+it integrates with :bb:chsrc:`GerritChangeSource`, and will automatically checkout
+the additional changes.
+
+Gerrit integration can be also triggered using forced build with property named
+``gerrit_change`` with values in format ``change_number/patchset_number``. This property
+will be translated into a branch name.  This feature allows integrators to build with
+several pending interdependent changes, which at the moment cannot be described properly
+in Gerrit, and can only be described by humans.
+
+.. bb:step:: Darcs
+
+.. _Step-Darcs:
+
+Darcs
++++++
+
+.. py:class:: buildbot.steps.source.darcs.Darcs
+
+The :bb:step`Darcs` build step performs a `Darcs <http://darcs.net/>`_
+checkout or update. ::
+
+    from buildbot.steps.source.darcs import Darcs
+    factory.addStep(Darcs(repourl='http://path/to/repo',
+                          mode='full', method='clobber', retry=(10, 1)))
+
+Darcs step takes the following arguments:
+
+``repourl``
+    (required): The URL at which the Darcs source repository is available.
+
+``mode``
+
+  (optional): defaults to ``'incremental'``.
+  Specifies whether to clean the build tree or not.
+
+    ``incremental``
+      The source is update, but any built files are left untouched.
+
+    ``full``
+      The build tree is clean of any built files.
+      The exact method for doing this is controlled by the ``method`` argument.
+
+
+``method``
+   (optional): defaults to ``copy`` when mode is ``full``.
+   Darcs' incremental mode does not require a method.
+   The full mode has two methods defined:
+
+   ``clobber``
+      It removes the working directory for each build then makes full checkout.
+
+   ``copy``
+      This first checkout source into source directory then copy the
+      ``source`` directory to ``build`` directory then performs
+      the build operation in the copied directory. This way we make
+      fresh builds with very less bandwidth to download source. The
+      behavior of source checkout follows exactly same as
+      incremental. It performs all the incremental checkout behavior
+      in ``source`` directory.
+
+
+.. bb:step:: Monotone
+
+.. _Step-Monotone:
+
+Monotone
+++++++++
+
+.. py:class:: buildbot.steps.source.mtn.Monotone
+
+The :bb:step:`Monotone <Monotone>` build step performs a `Monotone <http://www.monotone.ca/>`_
+checkout or update. ::
+
+    from buildbot.steps.source.mtn import Monotone
+    factory.addStep(Darcs(repourl='http://path/to/repo',
+                          mode='full', method='clobber', branch='some.branch.name',
+                          retry=(10, 1)))
+
+
+Monotone step takes the following arguments:
+
+``repourl``
+    the URL at which the Monotone source repository is available.
+
+``branch``
+    this specifies the name of the branch to use when a Build does not
+    provide one of its own.
+
+``progress``
+    this is a boolean that has a pull from the repository use
+    ``--ticker=dot`` instead of the default ``--ticker=none``.
+
+
+``mode``
+
+  (optional): defaults to ``'incremental'``.
+  Specifies whether to clean the build tree or not.
+
+    ``incremental``
+      The source is update, but any built files are left untouched.
+
+    ``full``
+      The build tree is clean of any built files.
+      The exact method for doing this is controlled by the ``method`` argument.
+
+
+``method``
+
+   (optional): defaults to ``copy`` when mode is ``full``.
+   Monotone's incremental mode does not require a method.
+   The full mode has four methods defined:
+
+   ``clobber``
+      It removes the build directory entirely then makes full clone
+      from repo. This can be slow as it need to clone whole repository.
+
+   ``clean``
+      This remove all other files except those tracked and ignored by Monotone. It will remove
+      all the files that appear in :command:`mtn ls unknown`. Then it will pull from 
+      remote and update the working directory.
+
+   ``fresh``
+      This remove all other files except those tracked by Monotone. It will remove
+      all the files that appear in :command:`mtn ls ignored` and :command:`mtn ls unknows`.
+      Then pull and update similar to ``clean``
+
+   ``copy``
+      This first checkout source into source directory then copy the
+      ``source`` directory to ``build`` directory then performs the
+      build operation in the copied directory. This way we make fresh
+      builds with very less bandwidth to download source. The behavior
+      of source checkout follows exactly same as incremental. It
+      performs all the incremental checkout behavior in ``source``
+      directory.
 
 .. _Source-Checkout-Slave-Side:
 
@@ -1459,7 +1700,7 @@ Monotone (Slave-Side)
 +++++++++++++++++++++
 
 The :bb:step:`Monotone <Monotone (Slave-Side)>` build step performs a
-`Monotone <http://www.monotone.ca>`_, (aka ``mtn``) checkout
+`Monotone <http://www.monotone.ca>`__, (aka ``mtn``) checkout
 or update.
 
 The Monotone step takes the following arguments:
@@ -1674,41 +1915,6 @@ The :bb:step:`ShellCommand` arguments are:
     if the command takes longer than this many seconds, it will be
     killed. This is disabled by default.
 
-``description``
-    This will be used to describe the command (on the Waterfall display)
-    while the command is still running. It should be a single
-    imperfect-tense verb, like `compiling` or `testing`. The preferred
-    form is a list of short strings, which allows the HTML
-    displays to create narrower columns by emitting a <br> tag between each
-    word. You may also provide a single string.
-
-``descriptionDone``
-    This will be used to describe the command once it has finished. A
-    simple noun like `compile` or `tests` should be used. Like
-    ``description``, this may either be a list of short strings or a
-    single string.
-
-    If neither ``description`` nor ``descriptionDone`` are set, the
-    actual command arguments will be used to construct the description.
-    This may be a bit too wide to fit comfortably on the Waterfall
-    display. ::
-
-        from buildbot.steps.shell import ShellCommand
-        f.addStep(ShellCommand(command=["make", "test"],
-                               description=["testing"],
-                               descriptionDone=["tests"]))
-
-``descriptionSuffix``
-    This is an optional suffix appended to the end of the description (ie,
-    after ``description`` and ``descriptionDone``). This can be used to distinguish
-    between build steps that would display the same descriptions in the waterfall.
-    This parameter may be set to list of short strings, a single string, or ``None``.
-
-    For example, a builder might use the ``Compile`` step to build two different
-    codebases. The ``descriptionSuffix`` could be set to `projectFoo` and `projectBar`,
-    respectively for each step, which will result in the full descriptions
-    `compiling projectFoo` and `compiling projectBar` to be shown in the waterfall.
-
 ``logEnviron``
     If this option is ``True`` (the default), then the step's logfile will describe the
     environment variables on the slave.  In situations where the environment is not
@@ -1719,6 +1925,11 @@ The :bb:step:`ShellCommand` arguments are:
     etc.), what signal should be sent to the process, specified by name. By
     default this is "KILL" (9). Specify "TERM" (15) to give the process a
     chance to cleanup.  This functionality requires a 0.8.6 slave or newer.
+
+``sigtermTime``
+
+    If set, when interrupting, try to kill the command with SIGTERM and wait for sigtermTime seconds before firing ``interuptSignal``.
+    If None, ``interruptSignal`` will be fired immediately on interrupt.
 
 ``initialStdin``
     If the command expects input on stdin, that can be supplied a a string with
@@ -1841,8 +2052,8 @@ left again. For this, specify regexps for the arguments
 entered into in the first matched group. The defaults, which are suitable for
 .. GNU Make, are these::
 
-..     directoryEnterPattern = "make.*: Entering directory [\"`'](.*)['`\"]"
-..     directoryLeavePattern = "make.*: Leaving directory"
+    directoryEnterPattern = "make.*: Entering directory [\"`'](.*)['`\"]"
+    directoryLeavePattern = "make.*: Leaving directory"
 
 (TODO: this step needs to be extended to look for GCC error messages
 as well, and collect them into a separate logfile, along with the
@@ -1855,24 +2066,26 @@ source code filenames involved).
 .. bb:step:: VC9
 .. bb:step:: VC10
 .. bb:step:: VC11
+.. bb:step:: VC12
 .. bb:step:: VS2003
 .. bb:step:: VS2005
 .. bb:step:: VS2008
 .. bb:step:: VS2010
 .. bb:step:: VS2012
+.. bb:step:: VS2013
 .. bb:step:: VCExpress9
-.. bb:step:: MsBuild
+.. bb:step:: MsBuild4
+.. bb:step:: MsBuild12
 
 Visual C++
 ++++++++++
 
 These steps are meant to handle compilation using Microsoft compilers.
-VC++ 6-11 (aka Visual Studio 2003-2012 and VCExpress9) are supported via calling
-``devenv``. VS2012 as well as Windows Driver Kit 8 are supported via the new
-``MsBuild`` step. These steps will take care of setting up a clean compilation
-environment, parsing the generated
-output in real time and delivering as detailed as possible information
-about the compilation executed.
+VC++ 6-12 (aka Visual Studio 2003-2013 and VCExpress9) are supported via calling
+``devenv``. Msbuild as well as Windows Driver Kit 8 are supported via the
+``MsBuild4`` and ``MsBuild12`` steps. These steps will take care of setting up a
+clean compilation environment, parsing the generated output in real time, and
+delivering as detailed as possible information about the compilation executed.
 
 All of the classes are in :mod:`buildbot.steps.vstudio`.  The available classes are:
 
@@ -1882,13 +2095,16 @@ All of the classes are in :mod:`buildbot.steps.vstudio`.  The available classes 
  * ``VC9``
  * ``VC10``
  * ``VC11``
+ * ``VC12``
  * ``VS2003``
  * ``VS2005``
  * ``VS2008``
  * ``VS2010``
  * ``VS2012``
+ * ``VS2013``
  * ``VCExpress9``
- * ``MsBuild``
+ * ``MsBuild4``
+ * ``MsBuild12``
 
 The available constructor arguments are
 
@@ -1933,7 +2149,7 @@ The available constructor arguments are
 ``arch``
     That one is only available with the class VS2005 (VC8). It gives the
     target architecture of the built artifact. It defaults to ``x86`` and
-    does not apply to ``MsBuild``. Please see ``platform`` below.
+    does not apply to ``MsBuild4`` or ``MsBuild12``. Please see ``platform`` below.
 
 ``project``
     This gives the specific project to build from within a
@@ -1941,34 +2157,101 @@ The available constructor arguments are
     for building cmake generate projects.
 
 ``platform``
-    This is a mandatory argument for MsBuild specifying the target platform
-    such as 'Win32', 'x64' or 'Vista Debug'. The last one is an example of
-    driver targets that appear once Windows Driver Kit 8 is installed.
+    This is a mandatory argument for ``MsBuild4`` and ``MsBuild12`` specifying
+    the target platform such as 'Win32', 'x64' or 'Vista Debug'. The last one
+    is an example of driver targets that appear once Windows Driver Kit 8 is
+    installed.
 
-Here is an example on how to drive compilation with Visual Studio 2010::
+Here is an example on how to drive compilation with Visual Studio 2013::
 
-    from buildbot.steps.VisualStudio import VS2010
+    from buildbot.steps.vstudio import VS2013
 
     f.addStep(
-        VS2010(projectfile="project.sln", config="release",
+        VS2013(projectfile="project.sln", config="release",
             arch="x64", mode="build",
                INCLUDE=[r'C:\3rd-pary\libmagic\include'],
                LIB=[r'C:\3rd-party\libmagic\lib-x64']))
 
-Here is a similar example using "msbuild"::
+Here is a similar example using "MsBuild12"::
 
-    from buildbot.steps.VisualStudio import MsBuild
+    from buildbot.steps.vstudio import MsBuild12
 
     # Build one project in Release mode for Win32
     f.addStep(
-        MsBuild(projectfile="trunk.sln", config="Release", platform="Win32",
+        MsBuild12(projectfile="trunk.sln", config="Release", platform="Win32",
                 workdir="trunk",
                 project="tools\\protoc"))
 
     # Build the entire solution in Debug mode for x64
     f.addStep(
-        MsBuild(projectfile="trunk.sln", config='Debug', platform='x64',
+        MsBuild12(projectfile="trunk.sln", config='Debug', platform='x64',
                 workdir="trunk"))
+
+
+.. bb:step:: Robocopy
+
+Robocopy
+++++++++
+
+.. py:class:: buildbot.steps.mswin.Robocopy
+
+This step runs ``robocopy`` on Windows.
+
+`Robocopy <http://technet.microsoft.com/en-us/library/cc733145.aspx>`_ is available in versions
+of Windows starting with Windows Vista and Windows Server 2008. For previous versions of Windows,
+it's available as part of the `Windows Server 2003 Resource Kit Tools <http://www.microsoft.com/en-us/download/details.aspx?id=17657>`_.
+
+::
+
+    from buildbot.steps.mswin import Robocopy
+
+    f.addStep(Robocopy(
+                name='deploy_binaries',
+                description='Deploying binaries...',
+                descriptionDone='Deployed binaries.',
+                source=Interpolate('Build\\Bin\\%(prop:configuration)s'),
+                destination=Interpolate('%(prop:deploy_dir)\\Bin\\%(prop:configuration)s'),
+                mirror=True
+            ))
+
+Available constructor arguments are:
+
+``source``
+    The path to the source directory (mandatory).
+
+``destination``
+    The path to the destination directory (mandatory).
+
+``files``
+    An array of file names or patterns to copy.
+
+``recursive``
+    Copy files and directories recursively (``/E`` parameter).
+
+``mirror``
+    Mirror the source directory in the destination directory,
+    including removing files that don't exist anymore (``/MIR`` parameter).
+
+``move``
+    Delete the source directory after the copy is complete (``/MOVE`` parameter).
+
+``exclude_files``
+    An array of file names or patterns to exclude from the copy (``/XF`` parameter).
+
+``exclude_dirs``
+    An array of directory names or patterns to exclude from the copy (``/XD`` parameter).
+
+``custom_opts``
+    An array of custom parameters to pass directly to the ``robocopy`` command.
+
+``verbose``
+    Whether to output verbose information (``/V /TS /TP`` parameters).
+
+Note that parameters ``/TEE /NP`` will always be appended to the
+command to signify, respectively, to output logging to the console, use
+Unicode logging, and not print any percentage progress information for
+each file.
+
 
 .. bb:step:: Test
 
@@ -2048,13 +2331,13 @@ One problem with specifying a database is that each reload of the
 configuration will get a new instance of ``ConnectionPool`` (even if the
 connection parameters are the same). To avoid that Buildbot thinks the builder
 configuration has changed because of this, use the
-:class:`process.mtrlogobserver.EqConnectionPool` subclass of
+:class:`steps.mtrlogobserver.EqConnectionPool` subclass of
 :class:`ConnectionPool`, which implements an equiality operation that avoids
 this problem.
 
 Example use::
 
-    from buildbot.process.mtrlogobserver import MTR, EqConnectionPool
+    from buildbot.steps.mtrlogobserver import MTR, EqConnectionPool
     myPool = EqConnectionPool("MySQLdb", "host", "buildbot", "password", "db")
     myFactory.addStep(MTR(workdir="mysql-test", dbpool=myPool,
                           command=["perl", "mysql-test-run.pl", "--force"]))
@@ -2563,6 +2846,63 @@ The optional ``compress`` argument can be given as ``'gz'`` or
           master as originally on the slave, see :option:`buildslave
           create-slave --umask` to change the default one.
 
+.. bb:step:: MultipleFileUpload
+
+Transferring Multiple Files At Once
++++++++++++++++++++++++++++++++++++
+
+.. py:class:: buildbot.steps.transfer.MultipleFileUpload
+
+In addition to the :bb:step:`FileUpload` and :bb:step:`DirectoryUpload` steps
+there is the :bb:step:`MultipleFileUpload` step for uploading a bunch of files
+(and directories) in a single :class:`BuildStep`.
+The step supports all arguments that are supported by :bb:step:`FileUpload` and
+:bb:step:`DirectoryUpload`, but instead of a the single ``slavesrc`` parameter
+it takes a (plural) ``slavesrcs`` parameter. This parameter should either be a
+list, or something that can be rendered as a list.::
+
+    from buildbot.steps.shell import ShellCommand, Test
+    from buildbot.steps.transfer import MultipleFileUpload
+
+    f.addStep(ShellCommand(command=["make", "test"]))
+    f.addStep(ShellCommand(command=["make", "docs"]))
+    f.addStep(MultipleFileUpload(slavesrcs=["docs", "test-results.html"],
+                                 masterdest="~/public_html",
+                                 url="~buildbot"))
+
+The ``url=`` parameter, can be used to specify a link to be displayed in the
+HTML status of the step.
+
+The way URLs are added to the step can be customized by extending the
+:bb:step:`MultipleFileUpload` class. the `allUploadsDone` method is called
+after all files have been uploaded and sets the URL. The `uploadDone` method
+is called once for each uploaded file and can be used to create file-specific
+links.::
+
+    from buildbot.steps.transfer import MultipleFileUpload
+    import os.path
+
+    class CustomFileUpload(MultipleFileUpload):
+        linkTypes = ('.html', '.txt')
+
+        def linkFile(self, basename):
+            name, ext = os.path.splitext(basename)
+            return ext in self.linkTypes
+
+        def uploadDone(self, result, source, masterdest):
+            if self.url:
+                basename = os.path.basename(source)
+                if self.linkFile(basename):
+                    self.addURL(self.url + '/' + basename, basename)
+
+        def allUploadsDone(self, result, sources, masterdest):
+            if self.url:
+                notLinked = filter(lambda src: not self.linkFile(src), sources)
+                numFiles = len(notLinked)
+                if numFiles:
+                    self.addURL(self.url, '... %d more' % numFiles)
+
+
 .. bb:step:: StringDownload
 .. bb:step:: JSONStringDownload
 .. bb:step:: JSONPropertiesDownload
@@ -2734,6 +3074,8 @@ stderr is lost.  For example, given ::
 Then ``my_extract`` will see ``stdout="output1\noutput2\n"``
 and ``stderr="error\n"``.
 
+Avoid using the ``extract_fn`` form of this step with commands that produce a great deal of output, as the output is buffered in memory until complete.
+
 .. bb:step:: SetPropertiesFromEnv
 
 .. py:class:: buildbot.steps.slave.SetPropertiesFromEnv
@@ -2758,11 +3100,44 @@ displayed as :envvar:`TMP` in the Windows GUI. ::
     from buildbot.steps.shell import Compile
 
     f.addStep(SetPropertiesFromEnv(variables=["SOME_JAVA_LIB_HOME", "JAVAC"]))
-    f.addStep(Compile(commands=[Interpolate("%(prop:JAVAC)s"), "-cp", Interpolate("%(prop:SOME_JAVA_LIB_HOME)s")))
+    f.addStep(Compile(commands=[Interpolate("%(prop:JAVAC)s"), "-cp", Interpolate("%(prop:SOME_JAVA_LIB_HOME)s")]))
 
 Note that this step requires that the Buildslave be at least version 0.8.3.
 For previous versions, no environment variables are available (the slave
 environment will appear to be empty).
+
+.. _Setting-Buildslave-Info:
+
+Setting Buildslave Info
+-----------------------
+
+Each buildslave has a dictionary of properties (the "buildslave info dictionary") that is persisted into the database.
+This info dictionary is displayed on the "buildslave" web page and is available in Interpolate operations.
+
+.. bb:step:: SetSlaveInfo
+
+.. _Step-SetSlaveInfo:
+
+SetSlaveInfo
+++++++++++++
+
+.. py:class:: buildbot.steps.master.SetSlaveInfo
+
+``SetSlaveInfo`` is a base class to provide a facility to set values in the buildslave info dictionary.
+For example::
+
+    from buildbot.steps.master import SetSlaveInfo
+
+    class SetSlaveFromPropInfo(SetSlaveInfo):
+        name = "SetSlaveFromPropInfo"
+
+        # override this to return the dictionary update
+        def getSlaveInfoUpdate(self):
+            # for example, copy a property into the buildslave dict
+            update = { 
+                "foo": self.getProperty("foo")
+            }
+            return update
 
 
 .. index:: Properties; triggering schedulers
@@ -2781,7 +3156,7 @@ The counterpart to the Triggerable described in section
     f.addStep(Trigger(schedulerNames=['build-prep'],
                       waitForFinish=True,
                       updateSourceStamp=True,
-                      set_properties={ 'quick' : False })
+                      set_properties={ 'quick' : False }))
 
 The ``schedulerNames=`` argument lists the :bb:sched:`Triggerable` schedulers
 that should be triggered when this step is executed.  Note that
@@ -2798,10 +3173,10 @@ then the buildstep succeeds immediately after triggering the schedulers.
 The SourceStamps to use for the triggered build are controlled by the arguments
 ``updateSourceStamp``, ``alwaysUseLatest``, and ``sourceStamps``.  If
 ``updateSourceStamp`` is ``True`` (the default), then step updates the
-:class:`SourceStamp`s given to the :bb:sched:`Triggerable` schedulers to include
+source stamps given to the :bb:sched:`Triggerable` schedulers to include
 ``got_revision`` (the revision actually used in this build) as ``revision``
 (the revision to use in the triggered builds). This is useful to ensure that
-all of the builds use exactly the same :class:`SourceStamp`s, even if other
+all of the builds use exactly the same source stamps, even if other
 :class:`Change`\s have occurred while the build was running. If
 ``updateSourceStamp`` is False (and neither of the other arguments are
 specified), then the exact same SourceStamps are used. If ``alwaysUseLatest`` is
@@ -3050,3 +3425,66 @@ framework. ::
 The single argument, ``testdir``, specifies where the tests should be run.
 This directory will be passed to the ``run_maxq.py`` command, and the results
 analyzed.
+
+.. index:: HTTP Requests
+.. bb:step:: HTTPStep
+.. bb:step:: POST
+.. bb:step:: GET
+.. bb:step:: PUT
+.. bb:step:: DELETE
+.. bb:step:: HEAD
+.. bb:step:: OPTIONS
+
+HTTP Requests
++++++++++++++
+
+Using the :bb:step:`HTTPStep` step, it is possible to perform HTTP requests in order to trigger another REST service about the progress of the build.
+
+.. note:: This step requires the `txrequests <https://pypi.python.org/pypi/txrequests>`_ and `requests <http://python-requests.org>`_ Python libraries.
+
+The parameters are the following:
+
+``url``
+    (mandatory) The URL where to send the request
+
+``method``
+    The HTTP method to use (out of ``POST``, ``GET``, ``PUT``, ``DELETE``,
+    ``HEAD`` or ``OPTIONS``), default to ``POST``.
+
+``params``
+    Dictionary of URL parameters to append to the URL.
+
+``data``
+    The body to attach the request.
+    If a dictionary is provided, form-encoding will take place.
+
+``headers``
+    Dictionary of headers to send.
+
+``other params``
+    Any other keywords supported by the ``requests`` api can be passed to this step
+
+    .. note::
+
+        The entire Buildbot master process shares a single Requests ``Session`` object.
+        This has the advantage of supporting connection re-use and other HTTP/1.1 features.
+        However, it also means that any cookies or other state changed by one step will be visible to other steps, causing unexpected results.
+        This behavior may change in future versions.
+
+When the method is known in advance, class with the name of the method can also be used.
+In this case, it is not necessary to specify the method.
+
+Example::
+
+    from buildbot.steps.http import POST
+    from buildbot.process.properties import Property
+    f.addStep(
+        POST( 'http://myRESTService.example.com/builds',
+            data = {
+            'builder': Property('buildername'),
+        'buildnumber': Property('buildnumber'),
+        'slavename': Property('slavename'),
+        'revision': Property('got_revision'),
+            }
+            )
+        )

@@ -13,23 +13,26 @@
 #
 # Copyright Buildbot Team Members
 
-from email.Utils import formatdate
-import time
 import re
+import time
 
-from twisted.python import log
+from email.utils import formatdate
+
 from twisted.internet import defer
+from twisted.internet import reactor
+from twisted.python import log
 
+from buildbot.interfaces import BuildSlaveTooOldError
 from buildbot.process import buildstep
 from buildbot.steps.shell import StringFileWriter
 from buildbot.steps.source.base import Source
-from buildbot.interfaces import BuildSlaveTooOldError
+
 
 class CVS(Source):
 
     name = "cvs"
 
-    renderables = [ "cvsroot" ]
+    renderables = ["cvsroot"]
 
     def __init__(self, cvsroot=None, cvsmodule='', mode='incremental',
                  method=None, branch=None, global_options=[], extra_options=[],
@@ -49,9 +52,10 @@ class CVS(Source):
     def startVC(self, branch, revision, patch):
         self.branch = branch
         self.revision = revision
-        self.stdio_log = self.addLog("stdio")
+        self.stdio_log = self.addLogForRemoteCommands("stdio")
         self.method = self._getMethod()
         d = self.checkCvs()
+
         def checkInstall(cvsInstalled):
             if not cvsInstalled:
                 raise BuildSlaveTooOldError("CVS is not installed on slave")
@@ -59,11 +63,21 @@ class CVS(Source):
         d.addCallback(checkInstall)
         d.addCallback(self.checkLogin)
 
+        d.addCallback(lambda _: self.sourcedirIsPatched())
+
+        def checkPatched(patched):
+            if patched:
+                return self.purge(False)
+            else:
+                return 0
+        d.addCallback(checkPatched)
         if self.mode == 'incremental':
             d.addCallback(lambda _: self.incremental())
         elif self.mode == 'full':
             d.addCallback(lambda _: self.full())
 
+        if patch:
+            d.addCallback(self.patch, patch)
         d.addCallback(self.parseGotRevision)
         d.addCallback(self.finish)
         d.addErrback(self.failed)
@@ -102,16 +116,22 @@ class CVS(Source):
             raise ValueError("Unknown method, check your configuration")
         defer.returnValue(rv)
 
-    def clobber(self):
+    def _clobber(self):
         cmd = buildstep.RemoteCommand('rmdir', {'dir': self.workdir,
-                                                'logEnviron': self.logEnviron})
+                                                'logEnviron': self.logEnviron,
+                                                'timeout': self.timeout})
         cmd.useLog(self.stdio_log, False)
         d = self.runCommand(cmd)
+
         def checkRemoval(res):
             if res != 0:
                 raise RuntimeError("Failed to delete directory")
             return res
         d.addCallback(lambda _: checkRemoval(cmd.rc))
+        return d
+
+    def clobber(self):
+        d = self._clobber()
         d.addCallback(lambda _: self.doCheckout(self.workdir))
         return d
 
@@ -127,26 +147,31 @@ class CVS(Source):
 
     def copy(self):
         cmd = buildstep.RemoteCommand('rmdir', {'dir': self.workdir,
-                                                'logEnviron': self.logEnviron})
+                                                'logEnviron': self.logEnviron,
+                                                'timeout': self.timeout})
         cmd.useLog(self.stdio_log, False)
-        d = self.runCommand(cmd)        
-        self.workdir = 'source'
+        d = self.runCommand(cmd)
+        old_workdir = self.workdir
+        self.workdir = self.srcdir
         d.addCallback(lambda _: self.incremental())
+
         def copy(_):
             cmd = buildstep.RemoteCommand('cpdir',
-                                          {'fromdir': 'source',
-                                           'todir':'build',
-                                           'logEnviron': self.logEnviron,})
+                                          {'fromdir': self.srcdir,
+                                           'todir': old_workdir,
+                                           'logEnviron': self.logEnviron,
+                                           'timeout': self.timeout})
             cmd.useLog(self.stdio_log, False)
             d = self.runCommand(cmd)
             return d
         d.addCallback(copy)
+
         def resetWorkdir(_):
-            self.workdir = 'build'
+            self.workdir = old_workdir
             return 0
         d.addCallback(resetWorkdir)
         return d
-        
+
     def purge(self, ignore_ignores):
         command = ['cvsdiscard']
         if ignore_ignores:
@@ -157,22 +182,45 @@ class CVS(Source):
                                            timeout=self.timeout)
         cmd.useLog(self.stdio_log, False)
         d = self.runCommand(cmd)
+
         def evaluate(cmd):
             if cmd.didFail():
                 raise buildstep.BuildStepFailed()
             return cmd.rc
         d.addCallback(evaluate)
         return d
-        
+
     def doCheckout(self, dir):
-        command = ['-d', self.cvsroot, '-z3', 'checkout', '-d', dir ]
+        command = ['-d', self.cvsroot, '-z3', 'checkout', '-d', dir]
         command = self.global_options + command + self.extra_options
         if self.branch:
             command += ['-r', self.branch]
         if self.revision:
             command += ['-D', self.revision]
-        command += [ self.cvsmodule ]
-        d = self._dovccmd(command, '')
+        command += [self.cvsmodule]
+        if self.retry:
+            abandonOnFailure = (self.retry[1] <= 0)
+        else:
+            abandonOnFailure = True
+        d = self._dovccmd(command, '', abandonOnFailure=abandonOnFailure)
+
+        def _retry(res):
+            if self.stopped or res == 0:
+                return res
+            delay, repeats = self.retry
+            if repeats > 0:
+                log.msg("Checkout failed, trying %d more times after %d seconds"
+                        % (repeats, delay))
+                self.retry = (delay, repeats - 1)
+                df = defer.Deferred()
+                df.addCallback(lambda _: self._clobber())
+                df.addCallback(lambda _: self.doCheckout(self.workdir))
+                reactor.callLater(delay, df.callback, None)
+                return df
+            return res
+
+        if self.retry:
+            d.addCallback(_retry)
         return d
 
     def doUpdate(self):
@@ -190,11 +238,12 @@ class CVS(Source):
 
     def finish(self, res):
         d = defer.succeed(res)
+
         def _gotResults(results):
             self.setStatus(self.cmd, results)
             return results
         d.addCallback(_gotResults)
-        d.addCallbacks(self.finished, self.checkDisconnect)
+        d.addCallback(self.finished)
         return d
 
     def checkLogin(self, _):
@@ -202,6 +251,7 @@ class CVS(Source):
             d = defer.succeed(0)
         else:
             d = self._dovccmd(['-d', self.cvsroot, 'login'])
+
             def setLogin(res):
                 # this happens only if the login command succeeds.
                 self.login = True
@@ -210,7 +260,7 @@ class CVS(Source):
 
         return d
 
-    def _dovccmd(self, command, workdir=None):
+    def _dovccmd(self, command, workdir=None, abandonOnFailure=True):
         if workdir is None:
             workdir = self.workdir
         if not command:
@@ -222,27 +272,38 @@ class CVS(Source):
                                            logEnviron=self.logEnviron)
         cmd.useLog(self.stdio_log, False)
         d = self.runCommand(cmd)
+
         def evaluateCommand(cmd):
-            if cmd.rc != 0:
+            if cmd.rc != 0 and abandonOnFailure:
                 log.msg("Source step failed while running command %s" % cmd)
                 raise buildstep.BuildStepFailed()
             return cmd.rc
         d.addCallback(lambda _: evaluateCommand(cmd))
         return d
 
+    def _cvsEntriesContainStickyDates(self, entries):
+        for line in entries.splitlines():
+            if line == 'D':  # the last line contains just a single 'D'
+                pass
+            elif line.split('/')[-1].startswith('D'):
+                # fields are separated by slashes, the last field contains the tag or date
+                # sticky dates start with 'D'
+                return True
+        return False  # no sticky dates
+
     @defer.inlineCallbacks
     def _sourcedirIsUpdatable(self):
         myFileWriter = StringFileWriter()
         args = {
-                'workdir': self.build.path_module.join(self.workdir, 'CVS'),
-                'writer': myFileWriter,
-                'maxsize': None,
-                'blocksize': 32*1024,
-                }
+            'workdir': self.build.path_module.join(self.workdir, 'CVS'),
+            'writer': myFileWriter,
+            'maxsize': None,
+            'blocksize': 32 * 1024,
+        }
 
         cmd = buildstep.RemoteCommand('uploadFile',
-                dict(slavesrc='Root', **args),
-                ignore_updates=True)
+                                      dict(slavesrc='Root', **args),
+                                      ignore_updates=True)
         yield self.runCommand(cmd)
         if cmd.rc is not None and cmd.rc != 0:
             defer.returnValue(False)
@@ -259,8 +320,8 @@ class CVS(Source):
 
         myFileWriter.buffer = ""
         cmd = buildstep.RemoteCommand('uploadFile',
-                dict(slavesrc='Repository', **args),
-                ignore_updates=True)
+                                      dict(slavesrc='Repository', **args),
+                                      ignore_updates=True)
         yield self.runCommand(cmd)
         if cmd.rc is not None and cmd.rc != 0:
             defer.returnValue(False)
@@ -268,6 +329,19 @@ class CVS(Source):
         if myFileWriter.buffer.strip() != self.cvsmodule:
             defer.returnValue(False)
             return
+
+        # if there are sticky dates (from an earlier build with revision),
+        # we can't update (unless we remove those tags with cvs update -A)
+        myFileWriter.buffer = ""
+        cmd = buildstep.RemoteCommand('uploadFile',
+                                      dict(slavesrc='Entries', **args),
+                                      ignore_updates=True)
+        yield self.runCommand(cmd)
+        if cmd.rc is not None and cmd.rc != 0:
+            defer.returnValue(False)
+            return
+        if self._cvsEntriesContainStickyDates(myFileWriter.buffer):
+            defer.returnValue(False)
 
         defer.returnValue(True)
 
@@ -278,6 +352,7 @@ class CVS(Source):
 
     def checkCvs(self):
         d = self._dovccmd(['--version'])
+
         def check(res):
             if res == 0:
                 return True

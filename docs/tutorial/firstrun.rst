@@ -18,8 +18,14 @@ the system.  In this tutorial no configuration or code changes are done.
 This tutorial assumes that you are running on Unix, but might be adaptable
 easily to Windows.
 
-*For the quickest way through, you should be able to cut and paste each shell
-block from this tutorial directly into a terminal.*
+For the :ref:`fastest way through in Linux <first-run-docker-label>`, you
+can use Docker, the linux container engine. Docker automates all the
+deployment steps for you.
+
+For a more manual approach, you should be able to cut and paste each shell
+block from this tutorial directly into a terminal.
+
+.. _getting-code-label:
 
 Getting the code
 ----------------
@@ -28,8 +34,7 @@ There are many ways to get the code on your machine.
 For this tutorial, we will use easy_install to install and run buildbot.
 While this isn't the preferred method to install buildbot, it is the simplest
 one to use for the purposes of this tutorial because it should work on all
-systems.  (The preferred method would be to install buildbot from packages
-of your distribution.)
+systems.  (The preferred method would be to install buildbot via ``pip``.)
 
 To make this work, you will need the following installed:
  * Python_ and the development packages for it
@@ -50,7 +55,9 @@ easy_install will need to download other projects from the Internet.
     Buildbot does not require root access.  Run the commands in this tutorial
     as a normal, unprivileged user.
 
-Let's dive in by typing at the terminal::
+Let's dive in by typing at the terminal:
+
+.. code-block:: bash
 
   cd
   mkdir -p tmp/buildbot
@@ -67,18 +74,24 @@ Let's dive in by typing at the terminal::
 Creating a master
 -----------------
 
-At the terminal, type::
+At the terminal, type:
+
+.. code-block:: bash
 
   buildbot create-master master
   mv master/master.cfg.sample master/master.cfg
 
-Now start it::
+Now start it:
+
+.. code-block:: bash
 
   buildbot start master
   tail -f master/twistd.log
 
 You will now see all of the log information from the master in this terminal.
-You should see lines like this::
+You should see lines like this:
+
+.. code-block:: none
 
     2011-12-04 10:04:40-0600 [-] Starting factory <buildbot.status.web.baseweb.RotateLogSite instance at 0x2e36638>
     2011-12-04 10:04:40-0600 [-] Setting up http.log rotating 10 files of 10000000 bytes each
@@ -94,41 +107,57 @@ You should see lines like this::
 Creating a slave
 ----------------
 
-Open a new terminal, and first enter the same sandbox you created before::
+Open a new terminal and enter the same sandbox you created before:
+
+.. code-block:: bash
 
   cd
   cd tmp/buildbot
   source sandbox/bin/activate
 
-Install buildslave command::
+Install the ``buildslave`` command:
+
+.. code-block:: bash
 
    easy_install buildbot-slave
 
-Now, create the slave::
+Now, create the slave:
+
+.. code-block:: bash
 
   buildslave create-slave slave localhost:9989 example-slave pass
 
 The user:host pair, username, and password should be the same as the ones in
-master.cfg; verify this is the case by looking at the section for `c['slaves']`
-and `c['slavePortnum']`::
+master.cfg; verify this is the case by looking at the section for ``c['slaves']``
+and ``c['slavePortnum']``:
+
+.. code-block:: bash
 
   cat master/master.cfg
 
-Now, start the slave::
+Now, start the slave:
+
+.. code-block:: bash
 
   buildslave start slave
 
-Check the slave's log::
+Check the slave's log:
+
+.. code-block:: bash
 
   tail -f slave/twistd.log
 
-You should see lines like the following at the end of the worker log::
+You should see lines like the following at the end of the worker log:
+
+.. code-block:: none
 
   2009-07-29 20:59:18+0200 [Broker,client] message from master: attached
   2009-07-29 20:59:18+0200 [Broker,client] SlaveBuilder.remote_print(buildbot-full): message from master: attached
   2009-07-29 20:59:18+0200 [Broker,client] sending application-level keepalives every 600 seconds
 
-Meanwhile, in the other terminal, in the master log, if you tail the log you should see lines like this::
+Meanwhile, in the other terminal, in the master log, if you tail the log you should see lines like this:
+
+.. code-block:: none
 
   2011-03-13 18:46:58-0700 [Broker,1,127.0.0.1] slave 'example-slave' attaching from IPv4Address(TCP, '127.0.0.1', 41306)
   2011-03-13 18:46:58-0700 [Broker,1,127.0.0.1] Got slaveinfo from 'example-slave'
@@ -141,7 +170,7 @@ a web page similar to:
 .. image:: _images/index.png
    :alt: index page
 
-Click on the 
+Click on the
 `Waterfall Display link <http://localhost:8010/waterfall>`_
 and you get this:
 
@@ -155,4 +184,4 @@ touching the configuration.
 
 You've got a taste now, but you're probably curious for more.  Let's step it
 up a little in the second tutorial by changing the configuration and doing
-an actual build. Continue on to :ref:`quick-tour-label`
+an actual build. Continue on to :ref:`quick-tour-label`.

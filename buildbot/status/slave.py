@@ -14,17 +14,19 @@
 # Copyright Buildbot Team Members
 
 import time
-from zope.interface import implements
+
+import copy
+
 from buildbot import interfaces
+from buildbot.util import ascii2unicode
+from buildbot.util import json
 from buildbot.util.eventual import eventually
+from zope.interface import implements
+
 
 class SlaveStatus:
     implements(interfaces.ISlaveStatus)
 
-    admin = None
-    host = None
-    access_uri = None
-    version = None
     connected = False
     graceful_shutdown = False
     paused = False
@@ -34,73 +36,153 @@ class SlaveStatus:
         self._lastMessageReceived = 0
         self.runningBuilds = []
         self.graceful_callbacks = []
+        self.pause_callbacks = []
+        self.info = {}
+        self.info_change_callbacks = []
         self.connect_times = []
 
     def getName(self):
         return self.name
+
     def getAdmin(self):
-        return self.admin
+        return self.getInfo('admin')
+
     def getHost(self):
-        return self.host
+        return self.getInfo('host')
+
     def getAccessURI(self):
-        return self.access_uri
+        return self.getInfo('access_uri')
+
     def getVersion(self):
-        return self.version
+        return self.getInfo('version')
+
     def isConnected(self):
         return self.connected
+
     def isPaused(self):
         return self.paused
+
     def lastMessageReceived(self):
         return self._lastMessageReceived
+
     def getRunningBuilds(self):
         return self.runningBuilds
+
     def getConnectCount(self):
         then = time.time() - 3600
-        return len([ t for t in self.connect_times if t > then ])
+        return len([t for t in self.connect_times if t > then])
 
     def setAdmin(self, admin):
-        self.admin = admin
+        self.updateInfo(admin=admin)
+
     def setHost(self, host):
-        self.host = host
+        self.updateInfo(host=host)
+
     def setAccessURI(self, access_uri):
-        self.access_uri = access_uri
+        self.updateInfo(access_uri=access_uri)
+
     def setVersion(self, version):
-        self.version = version
+        self.updateInfo(version=version)
+
     def setConnected(self, isConnected):
         self.connected = isConnected
+
     def setLastMessageReceived(self, when):
         self._lastMessageReceived = when
+
     def setPaused(self, isPaused):
         self.paused = isPaused
+        for cb in self.pause_callbacks:
+            eventually(cb, isPaused)
+
+    def addPauseWatcher(self, watcher):
+        """Add watcher to the list of watchers to be notified when the
+        pause flag is changed."""
+        if not watcher in self.pause_callbacks:
+            self.pause_callbacks.append(watcher)
+
+    def removePauseWatcher(self, watcher):
+        """Remove watcher from the list of watchers to be notified when the
+        pause shutdown flag is changed."""
+        if watcher in self.pause_callbacks:
+            self.pause_callbacks.remove(watcher)
 
     def recordConnectTime(self):
         # record this connnect, and keep data for the last hour
         now = time.time()
-        self.connect_times = [ t for t in self.connect_times if t > now - 3600 ] + [ now ]
+        self.connect_times = [t for t in self.connect_times if t > now - 3600] + [now]
 
     def buildStarted(self, build):
         self.runningBuilds.append(build)
+
     def buildFinished(self, build):
         self.runningBuilds.remove(build)
 
     def getGraceful(self):
         """Return the graceful shutdown flag"""
         return self.graceful_shutdown
+
     def setGraceful(self, graceful):
         """Set the graceful shutdown flag, and notify all the watchers"""
         self.graceful_shutdown = graceful
         for cb in self.graceful_callbacks:
             eventually(cb, graceful)
+
     def addGracefulWatcher(self, watcher):
         """Add watcher to the list of watchers to be notified when the
         graceful shutdown flag is changed."""
         if not watcher in self.graceful_callbacks:
             self.graceful_callbacks.append(watcher)
+
     def removeGracefulWatcher(self, watcher):
         """Remove watcher from the list of watchers to be notified when the
         graceful shutdown flag is changed."""
         if watcher in self.graceful_callbacks:
             self.graceful_callbacks.remove(watcher)
+
+    def getInfoAsDict(self):
+        return copy.deepcopy(self.info)
+
+    def setInfoDict(self, info):
+        self.info = info
+
+    def getInfo(self, key, default=None):
+        return self.info.get(key, default)
+
+    def updateInfo(self, **kwargs):
+        # round-trip the value through json to 'normalize' it and
+        # to ensure bad values dont get stuffed into the dictionary
+        new_values = json.loads(json.dumps(kwargs))
+
+        for special_key in ['admin', 'host']:
+            if special_key in new_values:
+                new_values[special_key] = ascii2unicode(new_values[special_key])
+
+        # try to see if anything changed (so we should inform watchers)
+        for k, v in new_values.iteritems():
+            if k not in self.info:
+                break
+            if self.info[k] != v:
+                break
+        else:
+            # nothing changed so just bail now
+            return
+
+        self.info.update(new_values)
+
+        for watcher in self.info_change_callbacks:
+            eventually(watcher, self.getInfoAsDict())
+
+    def hasInfo(self, key):
+        return key in self.info
+
+    def addInfoWatcher(self, watcher):
+        if not watcher in self.info_change_callbacks:
+            self.info_change_callbacks.append(watcher)
+
+    def removeInfoWatcher(self, watcher):
+        if watcher in self.info_change_callbacks:
+            self.info_change_callbacks.remove(watcher)
 
     def asDict(self):
         result = {}
@@ -114,5 +196,5 @@ class SlaveStatus:
         result['version'] = self.getVersion()
         result['connected'] = self.isConnected()
         result['runningBuilds'] = [b.asDict() for b in self.getRunningBuilds()]
+        result['info'] = self.getInfoAsDict()
         return result
-

@@ -9,6 +9,10 @@ Build properties are a generalized way to provide configuration information to
 build steps; see :ref:`Build-Properties` for the conceptual overview of
 properties.
 
+.. contents::
+    :depth: 1
+    :local:
+
 Some build properties come from external sources and are set before the build
 begins; others are set during the build, and available for later steps.  The
 sources for properties are:
@@ -115,16 +119,6 @@ Source Stamp Attributes
 
     This attribute is a list of dictionaries reperesnting the changes that make up this sourcestamp.
 
-``has_patch``
-``patch_level``
-``patch_body``
-``patch_subdir``
-``patch_author``
-``patch_comment``
-
-    These attributes are set if the source stamp was created by a :ref:`try scheduler<Try-Schedulers>`.
-
-
 Using Properties in Steps
 -------------------------
 
@@ -220,6 +214,10 @@ The following selectors are supported.
 ``kw``
     The key refers to a keyword argument passed to ``Interpolate``.
 
+``slave``
+    The key to the per-buildslave "info" dictionary (e.g., the "Slave information" properties shown
+    in the buildslave web page for each buildslave)
+
 The following ways of interpreting the value are available.
 
 ``-replacement``
@@ -254,13 +252,15 @@ Example ::
 
    from buildbot.steps.shell import ShellCommand
    from buildbot.process.properties import Interpolate
-   f.addStep(ShellCommand(command=[ 'make', Interpolate('REVISION=%(prop:got_revision:-%(src::revision:-unknown)s)s')
+   f.addStep(ShellCommand(command=[ 'make', Interpolate('REVISION=%(prop:got_revision:-%(src::revision:-unknown)s)s'),
                                     'dist' ]))
 
 In addition, ``Interpolate`` supports using positional string interpolation.
 Here, ``%s`` is used as a placeholder, and the substitutions (which may themselves be placeholders), are given as subsequent arguments::
 
-.. note:
+  TODO
+
+.. note::
 
   Like Python, you can use either positional interpolation *or*
   dictionary-style interpolation, not both.  Thus you cannot use a string
@@ -277,6 +277,7 @@ While Interpolate can handle many simple cases, and even some common conditional
 The ``renderer`` decorator creates a renderable object that will be replaced with the result of the function, called when the step it's passed to begins.
 The function receives an :class:`~buildbot.interfaces.IProperties` object, which it can use to examine the values of any and all properties.  For example::
 
+    from buildbot.process import properties
     @properties.renderer
     def makeCommand(props):
         command = [ 'make' ]
@@ -287,13 +288,26 @@ The function receives an :class:`~buildbot.interfaces.IProperties` object, which
             command += [ '-j', '2' ]
         command += [ 'all' ]
         return command
-   f.addStep(ShellCommand(command=makeCommand))
+    f.addStep(ShellCommand(command=makeCommand))
 
 You can think of ``renderer`` as saying "call this function when the step starts".
 
 .. index:: single: Properties; WithProperties
 
 .. _WithProperties:
+
+FlattenList
++++++++++++
+
+If nested list should be flatten for some renderables, FlattenList could be used.
+For example::
+
+   f.addStep(ShellCommand(command=[ 'make' ], descriptionDone=FlattenList([ 'make ', [ 'done' ]])))
+
+``descriptionDone`` would be set to ``[ 'make', 'done' ]`` when the ``ShellCommand`` executes.
+This is useful when a list-returning property is used in renderables.
+
+.. note:: ShellCommand automatically flattens nested lists in its ``command`` argument, so there is no need to use ``FlattenList`` for it.
 
 WithProperties
 ++++++++++++++
@@ -375,7 +389,7 @@ For example::
 
     class DetermineFoo(object):
         implements(IRenderable)
-        def getRenderingFor(self, props)
+        def getRenderingFor(self, props):
             if props.hasProperty('bar'):
                 return props['bar']
             elif props.hasProperty('baz'):
@@ -387,15 +401,15 @@ or, more practically, ::
 
     class Now(object):
         implements(IRenderable)
-        def getRenderingFor(self, props)
+        def getRenderingFor(self, props):
             return time.clock()
-    ShellCommand(command=['make', Interpolate('TIME=%(kw:now)', now=Now())])
+    ShellCommand(command=['make', Interpolate('TIME=%(kw:now)s', now=Now())])
 
 This is equivalent to::
 
     @renderer
     def now(props):
         return time.clock()
-    ShellCommand(command=['make', Interpolate('TIME=%(kw:now)', now=now)])
+    ShellCommand(command=['make', Interpolate('TIME=%(kw:now)s', now=now)])
 
 Note that a custom renderable must be instantiated (and its constructor can take whatever arguments you'd like), whereas a function decorated with :func:`renderer` can be used directly.

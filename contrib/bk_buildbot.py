@@ -15,10 +15,6 @@
 
 import commands
 import sys
-import os
-import re
-if sys.version_info < (2, 6):
-    import sets
 
 # We have hackish "-d" handling here rather than in the Options
 # subclass below because a common error will be to not have twisted in
@@ -29,7 +25,7 @@ DEBUG = None
 
 if '-d' in sys.argv:
     i = sys.argv.index('-d')
-    DEBUG = sys.argv[i+1]
+    DEBUG = sys.argv[i + 1]
     del sys.argv[i]
     del sys.argv[i]
 
@@ -39,10 +35,10 @@ if DEBUG:
     sys.stdout = f
 
 
-from twisted.internet import defer, reactor
+from twisted.cred import credentials
+from twisted.internet import reactor
 from twisted.python import usage
 from twisted.spread import pb
-from twisted.cred import credentials
 
 
 class Options(usage.Options):
@@ -59,10 +55,10 @@ class Options(usage.Options):
          "The hostname of the server that buildbot is running on"],
         ['bbport', 'p', 8007,
          "The port that buildbot is listening on"]
-        ]
+    ]
     optFlags = [
         ['dryrun', 'n', "Do not actually send changes"],
-        ]
+    ]
 
     def __init__(self):
         usage.Options.__init__(self)
@@ -70,6 +66,7 @@ class Options(usage.Options):
     def postOptions(self):
         if self['repository'] is None:
             raise usage.error("You must pass --repository")
+
 
 class ChangeSender:
 
@@ -101,16 +98,15 @@ class ChangeSender:
         revision = opts.get('revision')
 
         changes = {'who': who,
-                 'branch': branch,
-                 'files': changed,
-                 'comments': message,
-                 'revision': revision}
+                   'branch': branch,
+                   'files': changed,
+                   'comments': message,
+                   'revision': revision}
 
         if opts.get('category'):
             changes['category'] = opts.get('category')
 
         return changes
-
 
     def sendChanges(self, opts, changes):
         pbcf = pb.PBClientFactory()
@@ -129,7 +125,7 @@ class ChangeSender:
             opts.parseOptions()
             if not opts['branch']:
                 print "You must supply a branch with -b or --branch."
-                sys.exit(1);
+                sys.exit(1)
 
         except usage.error, ue:
             print opts

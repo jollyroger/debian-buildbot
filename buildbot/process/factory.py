@@ -14,15 +14,25 @@
 # Copyright Buildbot Team Members
 
 import warnings
-from twisted.python import deprecate, versions
 
-from buildbot import interfaces, util
+from twisted.python import deprecate
+from twisted.python import versions
+
+from buildbot import interfaces
+from buildbot import util
 from buildbot.process.build import Build
 from buildbot.process.buildstep import BuildStep
-from buildbot.steps.source import CVS, SVN
-from buildbot.steps.shell import Configure, Compile, Test, PerlModuleTest
+from buildbot.steps.shell import Compile
+from buildbot.steps.shell import Configure
+from buildbot.steps.shell import PerlModuleTest
+from buildbot.steps.shell import ShellCommand
+from buildbot.steps.shell import Test
+from buildbot.steps.source.cvs import CVS
+from buildbot.steps.source.svn import SVN
 
 # deprecated, use BuildFactory.addStep
+
+
 @deprecate.deprecated(versions.Version("buildbot", 0, 8, 6))
 def s(steptype, **kwargs):
     # convenience function for master.cfg files, to create step
@@ -31,6 +41,7 @@ def s(steptype, **kwargs):
 
 
 class BuildFactory(util.ComparableMixin):
+
     """
     @cvar  buildClass: class to use when creating builds
     @type  buildClass: L{buildbot.process.build.Build}
@@ -58,11 +69,11 @@ class BuildFactory(util.ComparableMixin):
         return b
 
     def addStep(self, step, **kwargs):
-        if kwargs or (type(step) == type(BuildStep) and issubclass(step, BuildStep)):
+        if kwargs or (isinstance(step, type(BuildStep)) and issubclass(step, BuildStep)):
             warnings.warn(
-                    "Passing a BuildStep subclass to factory.addStep is "
-                    "deprecated. Please pass a BuildStep instance instead.",
-                    DeprecationWarning, stacklevel=2)
+                "Passing a BuildStep subclass to factory.addStep is "
+                "deprecated. Please pass a BuildStep instance instead.",
+                DeprecationWarning, stacklevel=2)
             step = step(**kwargs)
         self.steps.append(interfaces.IBuildStepFactory(step))
 
@@ -72,20 +83,30 @@ class BuildFactory(util.ComparableMixin):
 
 # BuildFactory subclasses for common build tools
 
+
 class GNUAutoconf(BuildFactory):
+
     def __init__(self, source, configure="./configure",
                  configureEnv={},
                  configureFlags=[],
+                 reconf=None,
                  compile=["make", "all"],
-                 test=["make", "check"]):
+                 test=["make", "check"],
+                 distcheck=["make", "distcheck"]):
         BuildFactory.__init__(self, [source])
+
+        if reconf is True:
+            reconf = ["autoreconf", "-si"]
+        if reconf is not None:
+            self.addStep(ShellCommand(name="autoreconf", command=reconf))
+
         if configure is not None:
             # we either need to wind up with a string (which will be
             # space-split), or with a list of strings (which will not). The
             # list of strings is the preferred form.
-            if type(configure) is str:
+            if isinstance(configure, str):
                 if configureFlags:
-                    assert not " " in configure # please use list instead
+                    assert not " " in configure  # please use list instead
                     command = [configure] + configureFlags
                 else:
                     command = configure
@@ -97,22 +118,30 @@ class GNUAutoconf(BuildFactory):
             self.addStep(Compile(command=compile))
         if test is not None:
             self.addStep(Test(command=test))
+        if distcheck is not None:
+            self.addStep(Test(command=distcheck))
+
 
 class CPAN(BuildFactory):
+
     def __init__(self, source, perl="perl"):
         BuildFactory.__init__(self, [source])
         self.addStep(Configure(command=[perl, "Makefile.PL"]))
         self.addStep(Compile(command=["make"]))
         self.addStep(PerlModuleTest(command=["make", "test"]))
 
+
 class Distutils(BuildFactory):
+
     def __init__(self, source, python="python", test=None):
         BuildFactory.__init__(self, [source])
         self.addStep(Compile(command=[python, "./setup.py", "build"]))
         if test is not None:
             self.addStep(Test(command=test))
 
+
 class Trial(BuildFactory):
+
     """Build a python module that uses distutils and trial. Set 'tests' to
     the module in which the tests can be found, or set useTestCaseNames=True
     to always have trial figure out which tests to run (based upon which
@@ -130,7 +159,7 @@ class Trial(BuildFactory):
     def __init__(self, source,
                  buildpython=["python"], trialpython=[], trial=None,
                  testpath=".", randomly=None, recurse=None,
-                 tests=None,  useTestCaseNames=False, env=None):
+                 tests=None, useTestCaseNames=False, env=None):
         BuildFactory.__init__(self, [source])
         assert tests or useTestCaseNames, "must use one or the other"
         if trial is not None:
@@ -159,6 +188,7 @@ class Trial(BuildFactory):
 
 ConfigurableBuildFactory = BuildFactory
 
+
 class BasicBuildFactory(GNUAutoconf):
     # really a "GNU Autoconf-created tarball -in-CVS tree" builder
 
@@ -166,14 +196,16 @@ class BasicBuildFactory(GNUAutoconf):
                  configure=None, configureEnv={},
                  compile="make all",
                  test="make check", cvsCopy=False):
-        mode = "clobber"
+        mode = "full"
+        method = "clobber"
         if cvsCopy:
-            mode = "copy"
-        source = CVS(cvsroot=cvsroot, cvsmodule=cvsmodule, mode=mode)
+            method = "copy"
+        source = CVS(cvsroot=cvsroot, cvsmodule=cvsmodule, mode=mode, method=method)
         GNUAutoconf.__init__(self, source,
                              configure=configure, configureEnv=configureEnv,
                              compile=compile,
                              test=test)
+
 
 class QuickBuildFactory(BasicBuildFactory):
     useProgress = False
@@ -182,12 +214,13 @@ class QuickBuildFactory(BasicBuildFactory):
                  configure=None, configureEnv={},
                  compile="make all",
                  test="make check", cvsCopy=False):
-        mode = "update"
+        mode = "incremental"
         source = CVS(cvsroot=cvsroot, cvsmodule=cvsmodule, mode=mode)
         GNUAutoconf.__init__(self, source,
                              configure=configure, configureEnv=configureEnv,
                              compile=compile,
                              test=test)
+
 
 class BasicSVN(GNUAutoconf):
 
@@ -195,7 +228,7 @@ class BasicSVN(GNUAutoconf):
                  configure=None, configureEnv={},
                  compile="make all",
                  test="make check"):
-        source = SVN(svnurl=svnurl, mode="update")
+        source = SVN(svnurl=svnurl, mode="incremental")
         GNUAutoconf.__init__(self, source,
                              configure=configure, configureEnv=configureEnv,
                              compile=compile,

@@ -17,13 +17,17 @@
 from twisted.python.deprecate import deprecatedModuleAttribute
 from twisted.python.versions import Version
 
-from buildbot.buildslave.libvirt import (
-    LibVirtSlave, Domain, Connection)
+from buildbot.buildslave.libvirt import Connection
+from buildbot.buildslave.libvirt import Domain
+from buildbot.buildslave.libvirt import LibVirtSlave
 
 for _attr in ["LibVirtSlave", "Connection", "Domain"]:
     deprecatedModuleAttribute(Version("Buildbot", 0, 8, 8),
-            "It has been moved to buildbot.buildslave.libvirt",
-            "buildbot.libvirtbuildslave", _attr)
+                              "It has been moved to buildbot.buildslave.libvirt",
+                              "buildbot.libvirtbuildslave", _attr)
 
 _hush_pyflakes = [
-    LibVirtSlave, Domain, Connection]
+    LibVirtSlave,
+    Domain,
+    Connection,
+]

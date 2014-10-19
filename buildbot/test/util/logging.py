@@ -14,7 +14,9 @@
 # Copyright Buildbot Team Members
 
 import re
+
 from twisted.python import log
+
 
 class LoggingMixin(object):
 
@@ -29,4 +31,5 @@ class LoggingMixin(object):
             msg = log.textFromEventDict(event)
             if msg is not None and r.search(msg):
                 return
-        self.fail("%r not matched in log output" % regexp)
+        self.fail(
+            "%r not matched in log output.\n%s " % (regexp, self._logEvents))

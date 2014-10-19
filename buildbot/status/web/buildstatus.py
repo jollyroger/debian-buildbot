@@ -13,9 +13,12 @@
 #
 # Copyright Buildbot Team Members
 
-from buildbot.status.web.base import HtmlResource, IBox
+from buildbot.status.web.base import HtmlResource
+from buildbot.status.web.base import IBox
+
 
 class BuildStatusStatusResource(HtmlResource):
+
     def __init__(self, categories=None):
         HtmlResource.__init__(self)
 
@@ -55,12 +58,12 @@ class BuildStatusStatusResource(HtmlResource):
 
         # Display the bottom box with the build number in it.
         ctx['build'] = IBox(build).getBox(request).td(align="center")
-        
+
         template = request.site.buildbot_service.templates.get_template("buildstatus.html")
         data = template.render(**ctx)
 
         # We want all links to display in a new tab/window instead of in the
         # current one.
         # TODO: Move to template
-        data = data.replace('<a ', '<a target="_blank"')
+        data = data.replace('<a ', '<a target="_blank" ')
         return data

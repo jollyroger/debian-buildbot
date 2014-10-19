@@ -4,12 +4,10 @@
              {{ 'style="display:inline"' if short else '' }}>
     {% if not short %}
       {% if id == 'all' %}
-        <p>To cancel all builds, fill out the following fields and
-          push the 'Cancel' button</p>
+        <p>To cancel all builds, push the 'Cancel' button</p>
         <p>To cancel individual builds, click the 'Cancel' buttons above.</p>
       {% else %}
-        <p>To cancel this build, fill out the following fields and
-          push the 'Cancel' button</p>
+        <p>To cancel this build, push the 'Cancel' button</p>
       {% endif %}
     {% endif %}
     <input type="hidden" name="id" value="{{ id }}" />
@@ -23,8 +21,8 @@
       {% if changenum %}
         <p>To cancel all builds for this change, push the 'Cancel' button</p>
       {% else %}
-        <p>To cancel builds for this builder for a given change, fill out all
-          fields and push the 'Cancel' button</p>
+        <p>To cancel builds for this builder for a given change, fill out the
+          following field and push the 'Cancel' button</p>
       {% endif %}
 
       {% if changenum %}
@@ -74,6 +72,44 @@
       {% endif %}
 
       <input type="submit" value="Stop {{ label }}" />
+    </form>
+  {% endif %}
+{% endmacro %}
+
+{% macro cancel_build(cancel_url, authz, on_all=False, on_selected=False, builders=[], short=False, label="Build") %}
+  {% if not short %}
+    <form method="post" name="cancel_build" action="{{ cancel_url }}" class='command cancelbuild'
+               {{ 'style="display:inline"' if short else '' }}>
+      {% if not short %}
+        {% if on_all %}
+          <p>To cancel all pending builds, fill out the following field and
+          push the <i>Cancel {{ label }}</i> button</p>
+        {% elif on_selected %}
+          <p>To cancel selected pending builds, select the builders, fill out the
+          following field and push the <i>Cancel {{ label }}</i> button</p>
+          <table>
+          {% for b in builders %}
+            <tr>
+              <td align="center"><input type="checkbox" name="selected" value="{{ b.name }}"></td>
+              <td class="box"><a href="{{ b.link }}">{{ b.name|e }}</a></td>
+            </tr>
+          {% endfor %}
+          </table>
+
+        {% else %}
+          <p>To cancel this pending build, fill out the following field and
+          push the <i>Cancel {{ label }}</i> button</p>
+        {% endif %}
+      {% endif %}
+
+      {% if not short %}
+        <div class="row">
+          <span class="label">Reason:</span>
+          <input type="text" name="comments"/>
+        </div>
+      {% endif %}
+
+      <input type="submit" value="Cancel {{ label }}" />
     </form>
   {% endif %}
 {% endmacro %}
@@ -141,7 +177,7 @@
     {{ force_build_scheduler_parameter(f, authz, request, sch, default_props) }}
   {% endfor %}
 
-  <input type="submit" value="Force Build" />
+  <input type="submit" value="{{ sch.buttonName }}" />
  </form>
 {% endmacro %}
 {% macro force_build(force_url, authz, request, on_all=False, on_selected=False, builders=[], force_schedulers={},default_props={}) %}
@@ -217,6 +253,13 @@
    <div class="row">
      <span class="label">Reason for re-running build:</span>
      <input type='text' name='comments' />
+   </div>
+   <div class="row">
+     Rebuild using:
+     <select name="useSourcestamp">
+        <option value='exact' selected>Exact same revisions</option>
+        <option value='updated'>Same sourcestamps (ignoring 'got revision')</option>
+     </select>
    </div>
    <input type="submit" value="Rebuild" />
  </form>

@@ -13,31 +13,35 @@
 #
 # Copyright Buildbot Team Members
 
-import time
 import os
+import time
+
+from twisted.internet import defer
+from twisted.internet import utils
 from twisted.python import log
-from twisted.internet import defer, utils
 
 from buildbot import config
-from buildbot.util import deferredLocked
 from buildbot.changes import base
+from buildbot.util import deferredLocked
 from buildbot.util import epoch2datetime
 
+
 class HgPoller(base.PollingChangeSource):
+
     """This source will poll a remote hg repo for changes and submit
     them to the change master."""
 
     compare_attrs = ["repourl", "branch", "workdir",
                      "pollInterval", "hgpoller", "usetimestamps",
-                     "category", "project"]
+                     "category", "project", "pollAtLaunch"]
 
     db_class_name = 'HgPoller'
 
     def __init__(self, repourl, branch='default',
-                 workdir=None, pollInterval=10*60,
+                 workdir=None, pollInterval=10 * 60,
                  hgbin='hg', usetimestamps=True,
                  category=None, project='', pollinterval=-2,
-                 encoding='utf-8'):
+                 encoding='utf-8', pollAtLaunch=False):
 
         # for backward compatibility; the parameter used to be spelled with 'i'
         if pollinterval != -2:
@@ -46,7 +50,7 @@ class HgPoller(base.PollingChangeSource):
         self.repourl = repourl
         self.branch = branch
         base.PollingChangeSource.__init__(
-            self, name=repourl, pollInterval=pollInterval)
+            self, name=repourl, pollInterval=pollInterval, pollAtLaunch=pollAtLaunch)
         self.encoding = encoding
         self.lastChange = time.time()
         self.lastPoll = time.time()
@@ -55,10 +59,10 @@ class HgPoller(base.PollingChangeSource):
         self.usetimestamps = usetimestamps
         self.category = category
         self.project = project
-        self.commitInfo  = {}
+        self.commitInfo = {}
         self.initLock = defer.DeferredLock()
 
-        if self.workdir == None:
+        if self.workdir is None:
             config.error("workdir is mandatory for now in HgPoller")
 
     def describe(self):
@@ -90,13 +94,14 @@ class HgPoller(base.PollingChangeSource):
         args = ['log', '-r', rev, os.linesep.join((
             '--template={date|hgdate}',
             '{author}',
-            '{files}',
+            "{files % '{file}" + os.pathsep + "'}",
             '{desc|strip}'))]
         # Mercurial fails with status 255 if rev is unknown
         d = utils.getProcessOutput(self.hgbin, args, path=self._absWorkdir(),
-                                   env=os.environ, errortoo=False )
+                                   env=os.environ, errortoo=False)
+
         def process(output):
-            # fortunately, Mercurial issues all filenames one one line
+            # all file names are on one line
             date, author, files, comments = output.decode(self.encoding, "replace").split(
                 os.linesep, 3)
 
@@ -109,7 +114,7 @@ class HgPoller(base.PollingChangeSource):
                     log.msg('hgpoller: caught exception converting output %r '
                             'to timestamp' % date)
                     raise
-            return stamp, author.strip(), files.split(), comments.strip()
+            return stamp, author.strip(), files.split(os.pathsep)[:-1], comments.strip()
 
         d.addCallback(process)
         return d
@@ -131,7 +136,7 @@ class HgPoller(base.PollingChangeSource):
                                            env=os.environ)
         d.addCallback(self._convertNonZeroToFailure)
         d.addErrback(self._stopOnFailure)
-        d.addCallback(lambda _ : log.msg(
+        d.addCallback(lambda _: log.msg(
             "hgpoller: finished initializing working dir %r" % self.workdir))
         return d
 
@@ -139,7 +144,7 @@ class HgPoller(base.PollingChangeSource):
         self.lastPoll = time.time()
 
         d = self._initRepository()
-        d.addCallback(lambda _ : log.msg(
+        d.addCallback(lambda _: log.msg(
             "hgpoller: polling hg repo at %s" % self.repourl))
 
         # get a deferred object that performs the fetch
@@ -171,11 +176,13 @@ class HgPoller(base.PollingChangeSource):
         If never has been set, current rev is None.
         """
         d = self._getStateObjectId()
+
         def oid_cb(oid):
             d = self.master.db.state.getState(oid, 'current_rev', None)
+
             def addOid(cur):
                 if cur is not None:
-                    return  oid, int(cur)
+                    return oid, int(cur)
                 return oid, cur
             d.addCallback(addOid)
             return d
@@ -206,8 +213,8 @@ class HgPoller(base.PollingChangeSource):
         yet, one shouldn't be surprised to get errors)
         """
         d = utils.getProcessOutput(self.hgbin,
-                    ['heads', self.branch, '--template={rev}' + os.linesep],
-                    path=self._absWorkdir(), env=os.environ, errortoo=False)
+                                   ['heads', self.branch, '--template={rev}' + os.linesep],
+                                   path=self._absWorkdir(), env=os.environ, errortoo=False)
 
         def no_head_err(exc):
             log.err("hgpoller: could not find branch %r in repository %r" % (
@@ -260,7 +267,7 @@ class HgPoller(base.PollingChangeSource):
         revListArgs = ['log', '-b', self.branch, '-r', revrange,
                        r'--template={rev}:{node}\n']
         results = yield utils.getProcessOutput(self.hgbin, revListArgs,
-                    path=self._absWorkdir(), env=os.environ, errortoo=False )
+                                               path=self._absWorkdir(), env=os.environ, errortoo=False)
 
         revNodeList = [rn.split(':', 1) for rn in results.strip().split()]
 
@@ -270,16 +277,16 @@ class HgPoller(base.PollingChangeSource):
             timestamp, author, files, comments = yield self._getRevDetails(
                 node)
             yield self.master.addChange(
-                   author=author,
-                   revision=node,
-                   files=files,
-                   comments=comments,
-                   when_timestamp=epoch2datetime(timestamp),
-                   branch=self.branch,
-                   category=self.category,
-                   project=self.project,
-                   repository=self.repourl,
-                   src='hg')
+                author=author,
+                revision=node,
+                files=files,
+                comments=comments,
+                when_timestamp=epoch2datetime(timestamp),
+                branch=self.branch,
+                category=self.category,
+                project=self.project,
+                repository=self.repourl,
+                src='hg')
             # writing after addChange so that a rev is never missed,
             # but at once to avoid impact from later errors
             yield self._setCurrentRev(rev, oid=oid)
@@ -287,7 +294,7 @@ class HgPoller(base.PollingChangeSource):
     def _processChangesFailure(self, f):
         log.msg('hgpoller: repo poll failed')
         log.err(f)
-        # eat the failure to continue along the defered chain - we still want to catch up
+        # eat the failure to continue along the deferred chain - we still want to catch up
         return None
 
     def _convertNonZeroToFailure(self, res):
@@ -300,6 +307,6 @@ class HgPoller(base.PollingChangeSource):
     def _stopOnFailure(self, f):
         "utility method to stop the service when a failure occurs"
         if self.running:
-            d = defer.maybeDeferred(lambda : self.stopService())
+            d = defer.maybeDeferred(lambda: self.stopService())
             d.addErrback(log.err, 'while stopping broken HgPoller service')
         return f

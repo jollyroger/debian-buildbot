@@ -13,13 +13,15 @@
 #
 # Copyright Buildbot Team Members
 
-from twisted.python import log
-from twisted.internet import defer
-from twisted.application import service
+from buildbot import config
+from buildbot import interfaces
 from buildbot.pbutil import NewCredPerspective
-from buildbot.sourcestamp import SourceStamp
-from buildbot import interfaces, config
 from buildbot.process.properties import Properties
+from buildbot.sourcestamp import SourceStamp
+from twisted.application import service
+from twisted.internet import defer
+from twisted.python import log
+
 
 class DebugServices(config.ReconfigurableServiceMixin, service.MultiService):
 
@@ -33,12 +35,14 @@ class DebugServices(config.ReconfigurableServiceMixin, service.MultiService):
         self.debug_registration = None
         self.manhole = None
 
-
     @defer.inlineCallbacks
     def reconfigService(self, new_config):
 
         # debug client
-        config_changed = (self.debug_port != new_config.slavePortnum or
+        new_config_port = None
+        if new_config.protocols.get('pb'):
+            new_config_port = new_config.protocols['pb']['port']
+        config_changed = (self.debug_port != new_config_port or
                           self.debug_password != new_config.debugPassword)
 
         if not new_config.debugPassword or config_changed:
@@ -47,22 +51,22 @@ class DebugServices(config.ReconfigurableServiceMixin, service.MultiService):
                 self.debug_registration = None
 
         if new_config.debugPassword and config_changed:
-            factory = lambda mind, user : DebugPerspective(self.master)
+            factory = lambda mind, user: DebugPerspective(self.master)
             self.debug_registration = self.master.pbmanager.register(
-                    new_config.slavePortnum, "debug", new_config.debugPassword,
-                    factory)
+                new_config_port, "debug", new_config.debugPassword,
+                factory)
 
         self.debug_password = new_config.debugPassword
         if self.debug_password:
-            self.debug_port = new_config.slavePortnum
+            self.debug_port = new_config_port
         else:
             self.debug_port = None
 
         # manhole
         if new_config.manhole != self.manhole:
             if self.manhole:
-                yield defer.maybeDeferred(lambda :
-                        self.manhole.disownServiceParent())
+                yield defer.maybeDeferred(lambda:
+                                          self.manhole.disownServiceParent())
                 self.manhole.master = None
                 self.manhole = None
 
@@ -73,8 +77,7 @@ class DebugServices(config.ReconfigurableServiceMixin, service.MultiService):
 
         # chain up
         yield config.ReconfigurableServiceMixin.reconfigService(self,
-                                                    new_config)
-
+                                                                new_config)
 
     @defer.inlineCallbacks
     def stopService(self):
@@ -84,8 +87,8 @@ class DebugServices(config.ReconfigurableServiceMixin, service.MultiService):
 
         # manhole will get stopped as a sub-service
 
-        yield defer.maybeDeferred(lambda :
-                service.MultiService.stopService(self))
+        yield defer.maybeDeferred(lambda:
+                                  service.MultiService.stopService(self))
 
         # clean up
         if self.manhole:
@@ -105,7 +108,7 @@ class DebugPerspective(NewCredPerspective):
         pass
 
     def perspective_requestBuild(self, buildername, reason, branch,
-                            revision, properties={}):
+                                 revision, properties={}):
         c = interfaces.IControl(self.master)
         bc = c.getBuilder(buildername)
         ss = SourceStamp(branch, revision)
