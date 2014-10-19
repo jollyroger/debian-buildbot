@@ -1,0 +1,74 @@
+Description: Add more information about buildbot upgrade errors.
+ Upstream version 0.8.9 introduced additional checks on buildbot.tac that
+ caused master upgrade procedure to fail with only a warning. This behaviour
+ is changed to more descriptive message. Additional feature was added to run
+ upgrade process from user specified in the configuration file using
+ "/etc/init.d/buildmaster upgrade <master_name>" command although all output is
+ discarded.
+Author: Andriy Senkovych <jolly_roger@itblog.org.ua>
+Origin: other, https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=758432
+Bug-Debian: http://bugs.debian.org/758432
+Bug: http://trac.buildbot.net/ticket/2588
+Forwarded: https://github.com/buildbot/buildbot/pull/1267
+Date: Sun, 19 Oct 2014 22:16:38 +0300
+
+Index: debian-buildbot/buildbot/scripts/upgrade_master.py
+===================================================================
+--- debian-buildbot.orig/buildbot/scripts/upgrade_master.py
++++ debian-buildbot/buildbot/scripts/upgrade_master.py
+@@ -48,10 +48,14 @@ def checkBasedir(config):
+     tac = base.getConfigFromTac(config['basedir'])
+     if tac:
+         if isinstance(tac.get('rotateLength', 0), str):
+-            print "WARNING: rotateLength is a string, it should be a number"
++            print "ERROR: rotateLength is a string, it should be a number"
++            print "ERROR: Please, edit your buildbot.tac file and run again"
++            print "ERROR: See http://trac.buildbot.net/ticket/2588 for more details"
+             return False
+         if isinstance(tac.get('maxRotatedFiles', 0), str):
+-            print "WARNING: maxRotatedFiles is a string, it should be a number"
++            print "ERROR: maxRotatedFiles is a string, it should be a number"
++            print "ERROR: Please, edit your buildbot.tac file and run again"
++            print "ERROR: See http://trac.buildbot.net/ticket/2588 for more details"
+             return False
+ 
+     return True
+Index: debian-buildbot/contrib/init-scripts/buildmaster.init.sh
+===================================================================
+--- debian-buildbot.orig/contrib/init-scripts/buildmaster.init.sh
++++ debian-buildbot/contrib/init-scripts/buildmaster.init.sh
+@@ -160,8 +160,12 @@ case "$1" in
+         do_op "master_op" "restart" "Restarting buildmaster" "$2"
+         exit $?
+         ;;
++    upgrade)
++        do_op "master_op" "upgrade-master" "Upgrading buildmaster" "$2"
++        exit $?
++        ;;
+     *)
+-        echo "Usage: $0 {start|stop|restart|reload|force-reload}"
++        echo "Usage: $0 {start|stop|restart|reload|force-reload|upgrade}"
+         exit 1
+         ;;
+ esac
+Index: debian-buildbot/buildbot/test/unit/test_scripts_upgrade_master.py
+===================================================================
+--- debian-buildbot.orig/buildbot/test/unit/test_scripts_upgrade_master.py
++++ debian-buildbot/buildbot/test/unit/test_scripts_upgrade_master.py
+@@ -165,14 +165,14 @@ class TestUpgradeMasterFunctions(dirs.Di
+         self.activeBasedir(extra_lines=['rotateLength="32"'])
+         rv = upgrade_master.checkBasedir(mkconfig())
+         self.assertFalse(rv)
+-        self.assertInStdout('WARNING')
++        self.assertInStdout('ERROR')
+         self.assertInStdout('rotateLength')
+ 
+     def test_checkBasedir_invalid_maxRotatedFiles(self):
+         self.activeBasedir(extra_lines=['maxRotatedFiles="64"'])
+         rv = upgrade_master.checkBasedir(mkconfig())
+         self.assertFalse(rv)
+-        self.assertInStdout('WARNING')
++        self.assertInStdout('ERROR')
+         self.assertInStdout('maxRotatedFiles')
+ 
+     def test_loadConfig(self):

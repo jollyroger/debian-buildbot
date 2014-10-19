@@ -4,3 +4,4 @@ fix-init-scripts.patch
 disable-sqlalchemy-version-check.diff
 restart-single-instance.patch
 exit-code.patch
+upgrade-master.patch
