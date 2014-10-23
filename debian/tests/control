@@ -1,0 +1,3 @@
+Tests: python2
+Depends: @, @builddeps@
+Restrictions: allow-stderr

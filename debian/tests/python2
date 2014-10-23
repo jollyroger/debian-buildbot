@@ -1,0 +1,7 @@
+#!/bin/bash
+set -e
+
+cd "$ADTTMP"
+for py in $(pyversions -vi) ; do
+  python$py /usr/bin/trial buildbot.test
+done
