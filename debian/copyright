@@ -23,10 +23,6 @@ Copyright: 2008, Steve 'Ashcrow' Milner <smilner+buildbot@redhat.com>
 License: GPL-2
 
 
-Files: docs/buildbot.texinfo
-Copyright: 2005, 2006, 2009, 2010, Brian Warner
-License: GPL-2
-
 Files: buildbot/status/web/status_json.py
 Copyright: Buildbot Team Members
            2010, The Chromium Authors
@@ -37,16 +33,11 @@ Copyright: Buildbot Team Members
            2010, Isotoma Limited
 License: GPL-2
 
-Files: buildbot/changes/hgbuildbot.py
-Copyright: Buildbot Team Members
-           2007, Frederic Leroy <fredo@starox.org>
-License: GPL-2
-
 Files: contrib/buildbot_cvs_mail.py
 Copyright: 2002-2006 Barry Warsaw, Fred Drake, and contributors
 License: GPL-2
 
-Files: buildbot/ec2buildslave.py buildbot/buildslave.py
+Files: buildbot/ec2buildslave.py
 Copyright: Buildbot Team Members
            2009, Canonical Ltd.
 License: GPL-2
